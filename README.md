@@ -107,7 +107,6 @@ Dashboard sẽ chạy tại: `http://localhost:5000`
 │
 └── docs/                 # Documentation
     ├── DEPLOYMENT.md     # Hướng dẫn deploy
-    ├── CRONJOB_SETUP.md  # Hướng dẫn setup cronjob
     └── PROJECT_STRUCTURE.md
 ```
 
