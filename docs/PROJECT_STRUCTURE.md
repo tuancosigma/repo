@@ -5,12 +5,12 @@ Tài liệu mô tả cấu trúc thư mục và tổ chức code của project.
 ## Cấu trúc Thư mục
 
 ```
-script_axilen/
+.
 ├── app.py                      # Flask web application (main entry point)
-├── utils.py                    # Shared utilities cho các scripts
+├── config.py                   # Configuration và settings
+├── db_helpers.py               # Database helper functions
 ├── requirements.txt            # Python dependencies
 ├── .env                        # Environment variables (không commit vào git)
-├── .env.example                # Template cho .env file
 ├── .gitignore                  # Git ignore rules
 ├── deploy.sh                   # Deployment script cho production
 │
@@ -61,7 +61,8 @@ script_axilen/
 
 ### Root Directory
 - **app.py**: Flask web application, entry point chính cho dashboard
-- **utils.py**: Shared utilities được dùng bởi các scripts
+- **config.py**: Configuration và settings
+- **db_helpers.py**: Database helper functions và aggregation pipelines
 - **requirements.txt**: Danh sách Python packages cần thiết
 - **.env**: Environment variables (không commit vào git)
 - **deploy.sh**: Script tự động hóa deployment
@@ -115,8 +116,8 @@ Public assets, source files cho logo
    - README.md ở root để dễ tìm
 
 3. **Shared code**:
-   - `utils.py` ở root để dễ import
-   - Các scripts có thể import từ root: `from utils import get_mongo_client`
+   - `config.py` và `db_helpers.py` ở root để dễ import
+   - Các scripts import trực tiếp từ pymongo và dotenv
 
 4. **Environment**:
    - `.env` không commit vào git
@@ -127,14 +128,14 @@ Public assets, source files cho logo
 Khi import từ các scripts:
 
 ```python
-# Từ scripts/
-from utils import get_mongo_client
+# Từ scripts/ - import trực tiếp
+from pymongo import MongoClient
+from dotenv import load_dotenv
+import os
 
-# Từ tests/
-from utils import get_mongo_client
-
-# Từ tools/
-from utils import get_mongo_client
+# Hoặc từ root modules
+from config import MONGO_URI
+from db_helpers import get_collection
 ```
 
 ## Best Practices

@@ -4,21 +4,22 @@ Hướng dẫn deploy hệ thống lên server production.
 
 ## Bước 1: Upload Code lên Server
 
-### Option 1: SCP/SFTP
-```bash
-# Từ máy local, upload toàn bộ folder
-scp -r script_axilen user@axilens-preprod:~/tuan/
-```
-
-### Option 2: Git (nếu có repo)
+### Option 1: Git Clone
 ```bash
 # Trên server
 cd ~/tuan
-git clone <your-repo-url> script_axilen
+git clone https://github.com/cosigma-io/infra.git
+cd infra
+```
+
+### Option 2: SCP/SFTP
+```bash
+# Từ máy local, upload toàn bộ folder
+scp -r . user@server:~/tuan/infra/
 ```
 
 ### Option 3: Manual Copy
-- Copy toàn bộ folder `script_axilen` lên server vào `~/tuan/`
+- Copy toàn bộ project lên server
 
 ## Bước 2: Setup Environment trên Server
 
@@ -27,7 +28,7 @@ git clone <your-repo-url> script_axilen
 ssh user@axilens-preprod
 
 # Di chuyển vào thư mục
-cd ~/tuan/script_axilen
+cd ~/tuan/infra
 
 # Copy .env.example thành .env (nếu chưa có)
 cp .env.example .env
@@ -100,7 +101,7 @@ crontab -e
 
 ### Thêm dòng sau (chạy mỗi 5 phút):
 ```bash
-*/5 * * * * cd /home/tuan/script_axilen && /usr/bin/python3 tools/cache_ingest.py >> /var/log/cache_ingest.log 2>&1
+*/5 * * * * cd /path/to/infra && /usr/bin/python3 tools/cache_ingest.py >> /var/log/cache_ingest.log 2>&1
 ```
 
 **Lưu ý:** Điều chỉnh đường dẫn Python và thư mục cho đúng với server của bạn.
@@ -118,7 +119,7 @@ tail -f /var/log/cache_ingest.log
 
 ### Option 1: Chạy trực tiếp (Development)
 ```bash
-cd ~/tuan/script_axilen
+cd ~/tuan/infra
 python3 app.py
 ```
 
@@ -143,7 +144,7 @@ After=network.target
 
 [Service]
 User=tuan
-WorkingDirectory=/home/tuan/script_axilen
+WorkingDirectory=/path/to/infra
 Environment="PATH=/usr/bin:/usr/local/bin"
 ExecStart=/usr/bin/gunicorn -w 4 -b 0.0.0.0:5000 app:app
 Restart=always
@@ -233,7 +234,7 @@ sudo systemctl status cron
 grep CRON /var/log/syslog
 
 # Test manual
-cd ~/tuan/script_axilen && python3 tools/cache_ingest.py
+cd ~/tuan/infra && python3 tools/cache_ingest.py
 ```
 
 ### Dashboard không start:
@@ -265,7 +266,7 @@ print('MongoDB connection OK')
 ## File Structure trên Server
 
 ```
-~/tuan/script_axilen/
+/path/to/infra/
 ├── app.py                    # Flask dashboard
 ├── cache_ingest.py          # Cronjob script
 ├── setup_cache.py           # Setup script
@@ -282,7 +283,7 @@ print('MongoDB connection OK')
 
 ```bash
 # Run cache ingestion manually
-cd ~/tuan/script_axilen && python3 tools/cache_ingest.py
+cd ~/tuan/infra && python3 tools/cache_ingest.py
 
 # Check cache status
 python3 -c "from pymongo import MongoClient; from dotenv import load_dotenv; import os; load_dotenv(); client = MongoClient(os.getenv('MONGODB_URL')); print('Cache docs:', client['cache']['stats'].count_documents({}))"

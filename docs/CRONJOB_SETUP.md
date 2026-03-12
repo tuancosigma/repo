@@ -29,12 +29,12 @@ crontab -e
 
 Thêm dòng sau (chạy mỗi 5 phút):
 ```bash
-*/5 * * * * cd /path/to/script_axilen && /usr/bin/python3 tools/cache_ingest.py >> /var/log/cache_ingest.log 2>&1
+*/5 * * * * cd /path/to/infra && /usr/bin/python3 tools/cache_ingest.py >> /var/log/cache_ingest.log 2>&1
 ```
 
 Hoặc chạy mỗi phút (để test):
 ```bash
-* * * * * cd /path/to/script_axilen && /usr/bin/python3 tools/cache_ingest.py >> /var/log/cache_ingest.log 2>&1
+* * * * * cd /path/to/infra && /usr/bin/python3 tools/cache_ingest.py >> /var/log/cache_ingest.log 2>&1
 ```
 
 ### Windows (Task Scheduler):
@@ -45,7 +45,7 @@ Hoặc chạy mỗi phút (để test):
 4. Action: Start a program
 5. Program: `python`
 6. Arguments: `tools/cache_ingest.py`
-7. Start in: `C:\Users\USER\Downloads\script_axilen`
+7. Start in: `C:\path\to\infra` (thay bằng đường dẫn thực tế của project)
 
 ### Docker (nếu dùng Docker):
 
