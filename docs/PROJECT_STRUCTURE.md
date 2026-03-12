@@ -98,7 +98,6 @@ Public assets, source files cho logo
 
 1. **Scripts được phân loại theo chức năng**:
    - Count scripts → `scripts/`
-   - Setup/maintenance → `tools/`
    - Test/verify → `tests/`
 
 2. **Documentation tập trung**:

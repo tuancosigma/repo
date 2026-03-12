@@ -98,10 +98,6 @@ Dashboard sẽ chạy tại: `http://localhost:5000`
 │   ├── count_hwid_weekly.py
 │   └── count_organizations.py
 │
-├── tools/                # Setup và maintenance tools
-│   ├── setup_cache.py    # Khởi tạo cache collections
-│   └── cache_ingest.py   # Populate cache (cronjob)
-│
 ├── templates/            # HTML templates
 │   └── dashboard.html    # Main dashboard page
 │
