@@ -1,0 +1,640 @@
+:root {
+    --primary: #06b6d4;
+    --primary-dark: #0891b2;
+    --secondary: #0ea5e9;
+    --secondary-dark: #0284c7;
+    --accent: #10b981;
+    --accent-warm: #f59e0b;
+    --accent-red: #ef4444;
+    --bg-dark: #0f172a;
+    --bg-darker: #020617;
+    --bg-card: #1e293b;
+    --bg-hover: #334155;
+    --border: #334155;
+    --text-primary: #f1f5f9;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-darker) 100%);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    min-height: 100vh;
+    color: var(--text-primary);
+    overflow-x: hidden;
+}
+
+.navbar {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    background: linear-gradient(135deg, var(--bg-card) 0%, #1a2332 100%) !important;
+    border-bottom: 1px solid var(--border);
+}
+
+.navbar-brand {
+    color: var(--text-primary) !important;
+}
+
+/* Đảm bảo navbar-brand không có text content tự động */
+.navbar-brand::before,
+.navbar-brand::after {
+    content: none !important;
+}
+
+.navbar-brand h1,
+.navbar-brand h5 {
+    color: var(--text-primary) !important;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin: 0;
+    padding: 0;
+}
+
+.logo-img {
+    height: 40px;
+    width: auto;
+    filter: drop-shadow(0 2px 4px rgba(0,0,0,.2));
+}
+
+.filter-card {
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border-radius: 18px;
+    background: linear-gradient(135deg, var(--bg-card) 0%, #1a2332 100%);
+    transition: var(--transition);
+    backdrop-filter: blur(10px);
+    overflow: hidden;
+}
+
+.filter-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 16px 56px rgba(6, 182, 212, 0.25);
+    border-color: var(--primary);
+}
+
+.stat-card {
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border-radius: 18px;
+    transition: var(--transition);
+    background: linear-gradient(135deg, var(--bg-card) 0%, #1a2332 100%);
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    color: var(--text-primary); /* Đảm bảo text có màu sáng */
+}
+
+/* Đảm bảo tất cả text trong stat-card có màu sáng và đọc được */
+.stat-card .card-body {
+    color: var(--text-primary);
+}
+
+.stat-card h3,
+.stat-card .h3 {
+    color: var(--text-primary) !important;
+    font-weight: 700;
+}
+
+.stat-card p {
+    color: var(--text-muted) !important;
+}
+
+.stat-card small {
+    color: var(--text-secondary) !important;
+}
+
+.stat-card span {
+    color: var(--text-primary) !important;
+    font-weight: 600;
+}
+
+.stat-card .text-muted {
+    color: var(--text-muted) !important;
+}
+
+.stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--primary), var(--secondary));
+    transform: scaleX(0);
+    transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: left;
+}
+
+.stat-card:hover {
+    transform: translateY(-12px) scale(1.02);
+    box-shadow: 0 20px 60px rgba(6, 182, 212, 0.3);
+    border-color: var(--primary);
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(26, 35, 50, 0.8) 100%);
+}
+
+.stat-card:hover::before {
+    transform: scaleX(1);
+}
+
+.stat-icon {
+    width: 75px;
+    height: 75px;
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 32px;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+    transition: var(--transition);
+    flex-shrink: 0;
+}
+
+.stat-card:hover .stat-icon {
+    transform: translateY(-8px) rotate(8deg) scale(1.15);
+    box-shadow: 0 16px 32px rgba(0, 0, 0, 0.6);
+}
+
+.bg-primary {
+    background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+}
+
+.bg-success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.bg-warning {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+}
+
+.bg-info {
+    background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+}
+
+.bg-purple {
+    background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
+}
+
+.bg-orange {
+    background: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+}
+
+.card {
+    border: 1px solid var(--border);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border-radius: 18px;
+    margin-bottom: 24px;
+    background: linear-gradient(135deg, var(--bg-card) 0%, #1a2332 100%);
+    transition: var(--transition);
+    overflow: hidden;
+}
+
+.card:hover {
+    box-shadow: 0 12px 40px rgba(6, 182, 212, 0.15);
+}
+
+.card-title {
+    color: var(--primary);
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    border: none;
+    box-shadow: 0 10px 20px rgba(6, 182, 212, 0.35);
+    transition: var(--transition);
+    color: white;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, var(--primary-dark) 0%, #067989 100%);
+    transform: translateY(-4px);
+    box-shadow: 0 14px 32px rgba(6, 182, 212, 0.45);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, var(--accent) 0%, #059669 100%);
+    border: none;
+    box-shadow: 0 10px 20px rgba(16, 185, 129, 0.35);
+    color: white;
+    font-weight: 600;
+    transition: var(--transition);
+}
+
+.btn-success:hover {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    transform: translateY(-4px);
+    box-shadow: 0 14px 32px rgba(16, 185, 129, 0.45);
+}
+
+.btn-outline-primary {
+    color: var(--primary);
+    border: 2px solid var(--border);
+    transition: var(--transition);
+    font-weight: 600;
+}
+
+.btn-outline-primary:hover {
+    background: rgba(6, 182, 212, 0.15);
+    border-color: var(--primary);
+    box-shadow: 0 8px 16px rgba(6, 182, 212, 0.2);
+}
+
+.btn-outline-success, .btn-outline-info, .btn-outline-secondary {
+    border: 2px solid var(--border);
+}
+
+.form-label {
+    font-weight: 650;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    letter-spacing: 0.2px;
+}
+
+.form-select, .form-control {
+    border-radius: 14px;
+    border: 1.5px solid var(--border);
+    background-color: rgba(2, 6, 23, 0.7);
+    color: var(--text-primary) !important;
+    transition: var(--transition);
+    font-weight: 500;
+}
+
+/* Đảm bảo placeholder text có màu sáng */
+.form-control::placeholder,
+.form-select::placeholder {
+    color: var(--text-muted) !important;
+    opacity: 0.8 !important;
+}
+
+.form-control::-webkit-input-placeholder {
+    color: var(--text-muted) !important;
+    opacity: 0.8 !important;
+}
+
+.form-control::-moz-placeholder {
+    color: var(--text-muted) !important;
+    opacity: 0.8 !important;
+}
+
+.form-control:-ms-input-placeholder {
+    color: var(--text-muted) !important;
+    opacity: 0.8 !important;
+}
+
+.form-select:hover, .form-control:hover {
+    border-color: var(--border);
+    box-shadow: 0 4px 12px rgba(6, 182, 212, 0.1);
+}
+
+.form-select:focus, .form-control:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.15);
+    transform: translateY(-2px);
+    background-color: rgba(15, 23, 42, 0.95);
+    color: var(--text-primary) !important;
+}
+
+.chart-container {
+    position: relative;
+    height: 400px;
+    padding: 10px;
+}
+
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(2, 6, 23, 0.8);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    backdrop-filter: blur(8px);
+}
+
+.loading-overlay.show {
+    display: flex;
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.shadow-sm {
+    box-shadow: 0 2px 8px rgba(0,0,0,.1) !important;
+}
+
+.btn-group .btn {
+    border-radius: 10px;
+    margin: 0 4px;
+    border-color: var(--border);
+    color: var(--text-secondary);
+    transition: all 0.3s;
+}
+
+.btn-group .btn.active {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: white;
+    border-color: var(--primary);
+    box-shadow: 0 8px 16px rgba(14, 165, 233, 0.3);
+}
+
+/* Collection filter styling */
+#collectionFilter {
+    min-height: 38px;
+}
+
+#collectionFilter option {
+    padding: 8px;
+}
+
+/* Date range display */
+#dateRangeDisplay {
+    font-size: 0.875rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+}
+
+/* Auto refresh indicator */
+#autoRefreshBtn.active {
+    background: linear-gradient(135deg, var(--accent) 0%, #10b981 100%);
+    color: white;
+    border-color: var(--accent);
+    box-shadow: 0 8px 16px rgba(16, 185, 129, 0.3);
+}
+
+/* Card header improvements */
+.card-header {
+    background-color: rgba(14, 165, 233, 0.05);
+    border-bottom: 1px solid var(--border);
+    font-weight: 700;
+}
+
+.card-header .btn-link {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.card-header .btn-link:hover {
+    color: var(--secondary);
+}
+
+.card-header .btn-link:focus {
+    box-shadow: none;
+}
+
+/* Better spacing */
+.mb-3 {
+    margin-bottom: 1rem !important;
+}
+
+.mb-4 {
+    margin-bottom: 1.5rem !important;
+}
+
+/* Responsive optimizations */
+@media (max-width: 1200px) {
+    .stat-card h3 {
+        font-size: 1.75rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .chart-container {
+        height: 300px;
+    }
+    
+    .stat-card {
+        margin-bottom: 12px;
+    }
+    
+    .stat-card h3 {
+        font-size: 1.5rem;
+    }
+    
+    .stat-icon {
+        width: 60px;
+        height: 60px;
+        font-size: 22px;
+    }
+    
+    .btn-group {
+        flex-wrap: wrap;
+    }
+    
+    .btn-group .btn {
+        margin-bottom: 6px;
+        border-radius: 8px;
+    }
+    
+    .container-fluid {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+}
+
+@media (max-width: 576px) {
+    .stat-card h3 {
+        font-size: 1.35rem;
+    }
+    
+    .stat-icon {
+        width: 50px;
+        height: 50px;
+        font-size: 20px;
+    }
+    
+    .navbar-brand {
+        font-size: 0.9rem;
+    }
+    
+    .card-body {
+        padding: 1rem;
+    }
+}
+
+/* Performance optimizations */
+.stat-card {
+    will-change: transform;
+}
+
+.chart-container canvas {
+    max-width: 100%;
+    height: auto !important;
+}
+
+/* Loading skeleton for better perceived performance */
+.skeleton {
+    background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+    background-size: 200% 100%;
+    animation: loading 1.5s ease-in-out infinite;
+}
+
+@keyframes loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Text colors for dark theme */
+.text-muted {
+    color: var(--text-muted) !important;
+}
+
+.text-white-50 {
+    color: rgba(241, 245, 249, 0.6) !important;
+}
+
+code {
+    background-color: rgba(14, 165, 233, 0.15);
+    color: var(--primary);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Monaco', 'Courier New', monospace;
+}
+
+/* Đảm bảo không có white background với black text cho các phần tử cụ thể */
+.navbar-brand,
+.navbar-brand * {
+    background-color: transparent !important;
+}
+
+.navbar-brand,
+.navbar-brand *,
+.navbar-brand::before,
+.navbar-brand::after {
+    background: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Đảm bảo tất cả tables không có white background */
+.table,
+.table-light,
+.table thead,
+.table tbody,
+.table td,
+.table th {
+    background-color: transparent !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border) !important;
+}
+
+.table-light {
+    background-color: transparent !important;
+}
+
+.table-light th {
+    background-color: rgba(14, 165, 233, 0.1) !important;
+    color: var(--text-primary) !important;
+}
+
+/* Đảm bảo tất cả text trong card-body có màu sáng */
+.card-body,
+.card-body * {
+    color: var(--text-primary) !important;
+}
+
+.card-body p,
+.card-body small,
+.card-body span:not(code):not(.badge) {
+    color: var(--text-secondary) !important;
+}
+
+.card-body strong,
+.card-body b {
+    color: var(--text-primary) !important;
+}
+
+.card-body .text-muted {
+    color: var(--text-muted) !important;
+}
+
+/* Đảm bảo tất cả text trong các phần giải thích có màu sáng */
+.card p:not(.card-title),
+.card small:not(.badge),
+.card span:not(code):not(.badge) {
+    color: var(--text-secondary) !important;
+}
+
+.card strong,
+.card b {
+    color: var(--text-primary) !important;
+}
+
+/* Đảm bảo border có màu đúng */
+.border {
+    border-color: var(--border) !important;
+}
+
+.border-rounded {
+    border-color: var(--border) !important;
+}
+
+/* Đảm bảo hr có màu đúng */
+hr {
+    border-color: var(--border) !important;
+    opacity: 0.5;
+}
+
+/* Đảm bảo tất cả modal content có màu sáng */
+.modal-content {
+    background-color: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+}
+
+.modal-content * {
+    color: var(--text-primary) !important;
+}
+
+.modal-content .text-muted {
+    color: var(--text-muted) !important;
+}
+
+.modal-content small {
+    color: var(--text-secondary) !important;
+}
+
+/* Đảm bảo tất cả badges và elements không có white background */
+.badge,
+.alert {
+    background-color: rgba(14, 165, 233, 0.1) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border) !important;
+}
+
+.alert-info {
+    background-color: rgba(6, 182, 212, 0.15) !important;
+    color: var(--text-primary) !important;
+}
+
+.alert-success {
+    background-color: rgba(16, 185, 129, 0.15) !important;
+    color: var(--text-primary) !important;
+}
+
+.alert-warning {
+    background-color: rgba(245, 158, 11, 0.15) !important;
+    color: var(--text-primary) !important;
+}

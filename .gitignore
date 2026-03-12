@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# MongoDB
+*.json
+!package.json
+!package-lock.json
+
+# Reports
+*.pdf
+!docs/*.pdf
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Cache
+.cache/
+*.cache
+
+# Node modules (if any)
+node_modules/
+
+# Python virtual environment
+venv/
+env/
+ENV/

@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COSIGMA - MongoDB Statistics Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-dark shadow-sm">
+        <div class="container-fluid">
+            <div class="navbar-brand d-flex align-items-center gap-3" style="background: transparent !important;">
+                <div class="d-flex align-items-center gap-2" style="background: transparent !important;">
+                    <img src="{{ url_for('static', filename='logo.png') }}" alt="COSIGMA Logo" class="logo-img" style="background: transparent !important;">
+                    <h1 class="h5 mb-0 fw-bold" style="color: var(--text-primary) !important; background: transparent !important;">COSIGMA</h1>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-sm me-2" style="background: rgba(14, 165, 233, 0.1); border: 1px solid var(--border); color: var(--text-secondary);" onclick="toggleAutoRefresh()" id="autoRefreshBtn">
+                    <i class="bi bi-arrow-clockwise"></i> <span id="autoRefreshStatus">OFF</span>
+                </button>
+                <span class="text-muted small" id="lastUpdate">Last update: --</span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-5">
+        <div class="row mb-5">
+            <div class="col-12">
+                <div class="card filter-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <div>
+                                <h5 class="card-title mb-1"><i class="bi bi-funnel"></i> Filters & Controls</h5>
+                                <small class="text-muted">Customize your dashboard view</small>
+                            </div>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button type="button" class="btn btn-outline-primary" onclick="exportPDF()" title="Export as PDF report">
+                                    <i class="bi bi-file-earmark-pdf"></i> PDF
+                                </button>
+                                <button type="button" class="btn btn-outline-success" onclick="exportCSV()" title="Export as CSV file">
+                                    <i class="bi bi-filetype-csv"></i> CSV
+                                </button>
+                                <button type="button" class="btn btn-outline-info" onclick="exportJSON()" title="Export as JSON file">
+                                    <i class="bi bi-filetype-json"></i> JSON
+                                </button>
+                            </div>
+                        </div>
+                        <div class="row g-4 align-items-end">
+                            <div class="col-lg-3">
+                                <label class="form-label"><i class="bi bi-calendar-range"></i> Time Period</label>
+                                <select class="form-select" id="periodSelect" onchange="onPeriodChange()">
+                                    <option value="daily">Last 24 Hours</option>
+                                    <option value="weekly" selected>Last 7 Days</option>
+                                </select>
+                            </div>
+                            <div class="col-lg-3">
+                                <label class="form-label"><i class="bi bi-clock"></i> Auto Refresh</label>
+                                <select class="form-select" id="refreshInterval" onchange="updateRefreshInterval()">
+                                    <option value="0">Disabled</option>
+                                    <option value="30">30 seconds</option>
+                                    <option value="60" selected>1 minute</option>
+                                    <option value="300">5 minutes</option>
+                                    <option value="600">10 minutes</option>
+                                </select>
+                            </div>
+                            <div class="col-lg-6">
+                                <label class="form-label"><i class="bi bi-calendar2-range"></i> Date Range</label>
+                                <div class="form-control" id="dateRangeDisplay" style="min-height: 42px; display: flex; align-items: center; background: rgba(14, 165, 233, 0.05);">
+                                    <small class="text-muted">Calculating...</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Statistics Cards -->
+        <div class="row mb-5 g-3" id="statsCards">
+            <div class="col-lg-2 col-md-4 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <p class="text-muted mb-2 text-uppercase small fw-semibold" style="letter-spacing: 0.5px;">Zip Archives</p>
+                            <h3 class="mb-0 fw-bold" id="zipCount">0</h3>
+                        </div>
+                        <div class="stat-icon bg-info ms-3">
+                            <i class="bi bi-archive"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-2 col-md-4 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <p class="text-muted mb-2 text-uppercase small fw-semibold" style="letter-spacing: 0.5px;">Decompressed</p>
+                            <h3 class="mb-0 fw-bold" id="decompressedCount">0</h3>
+                        </div>
+                        <div class="stat-icon bg-success ms-3">
+                            <i class="bi bi-check-circle"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-2 col-md-4 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <p class="text-muted mb-2 text-uppercase small fw-semibold" style="letter-spacing: 0.5px;">Credentials</p>
+                            <h3 class="mb-0 fw-bold" id="credentialsCount">0</h3>
+                        </div>
+                        <div class="stat-icon bg-warning ms-3">
+                            <i class="bi bi-key"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-2 col-md-4 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <p class="text-muted mb-2 text-uppercase small fw-semibold" style="letter-spacing: 0.5px;">HWID Found</p>
+                            <h3 class="mb-0 fw-bold" id="hwidCount">0</h3>
+                        </div>
+                        <div class="stat-icon bg-primary ms-3">
+                            <i class="bi bi-cpu"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-2 col-md-4 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <p class="text-muted mb-2 text-uppercase small fw-semibold" style="letter-spacing: 0.5px;">Organizations</p>
+                            <h3 class="mb-0 fw-bold" id="organizationsCount">0</h3>
+                            <small class="text-muted d-block" style="font-size: 0.8rem;">Indexes: <span id="organizationsIndexes">0</span></small>
+                        </div>
+                        <div class="stat-icon bg-purple ms-3">
+                            <i class="bi bi-building"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-2 col-md-4 col-sm-6">
+                <div class="card stat-card h-100">
+                    <div class="card-body d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <p class="text-muted mb-2 text-uppercase small fw-semibold" style="letter-spacing: 0.5px;">Total Domains</p>
+                            <h3 class="mb-0 fw-bold" id="totalDomainsCount">0</h3>
+                            <small class="text-muted d-block" style="font-size: 0.8rem;">Unique: <span id="uniqueDomainsCount">0</span></small>
+                        </div>
+                        <div class="stat-icon bg-orange ms-3">
+                            <i class="bi bi-globe"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Additional Info Section (Collapsible) -->
+        <div class="row mb-5">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <button class="btn btn-link text-decoration-none p-0 w-100 text-start d-flex align-items-center gap-2" type="button" data-bs-toggle="collapse" data-bs-target="#additionalInfo" aria-expanded="false" aria-controls="additionalInfo">
+                                <i class="bi bi-chevron-down"></i> Additional Information
+                            </button>
+                        </h5>
+                    </div>
+                    <div class="collapse" id="additionalInfo">
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-12 mb-3">
+                                    <h6 class="mb-3"><i class="bi bi-calendar-range"></i> Data Dated</h6>
+                                    <p class="text-muted small mb-3">Date range of source data</p>
+                                    <div id="datedInfo">
+                                        <div class="text-center text-muted">
+                                            <small>Loading...</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <hr>
+                            <div class="row">
+                                <div class="col-12">
+                                    <h6 class="mb-3"><i class="bi bi-list-ul"></i> Domain Occurrences</h6>
+                                    <p class="small mb-3" style="color: var(--text-secondary);">
+                                        <strong style="color: var(--text-primary);">Index Organization</strong> = <code>_id</code> field of organization document. 
+                                        Example: Organization "<code>example</code>" has index organization = "<code>example</code>"
+                                    </p>
+                                    <div id="domainOccurrences" class="row g-2">
+                                        <div class="col-12 text-center" style="color: var(--text-muted) !important;">
+                                            <small>Loading domain occurrences...</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mb-5 g-3">
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h5 class="card-title mb-0"><i class="bi bi-graph-up"></i> Statistics Over Time</h5>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button type="button" class="btn btn-outline-primary" onclick="changeChartType()" id="chartTypeLine">
+                                    <i class="bi bi-graph-up"></i> Line
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" onclick="changeChartType()" id="chartTypeBar">
+                                    <i class="bi bi-bar-chart"></i> Bar
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" onclick="changeChartType()" id="chartTypeArea">
+                                    <i class="bi bi-area-chart"></i> Area
+                                </button>
+                            </div>
+                        </div>
+                        <div class="chart-container">
+                            <canvas id="statsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title mb-4"><i class="bi bi-pie-chart"></i> Distribution</h5>
+                        <div class="chart-container">
+                            <canvas id="pieChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Search & Reports Section -->
+        <div class="row mb-5">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">
+                            <button class="btn btn-link text-decoration-none p-0 w-100 text-start d-flex align-items-center gap-2" type="button" data-bs-toggle="collapse" data-bs-target="#searchReports" aria-expanded="false" aria-controls="searchReports">
+                                <i class="bi bi-search"></i> Search & Reports
+                            </button>
+                        </h5>
+                    </div>
+                    <div class="collapse" id="searchReports">
+                        <div class="card-body">
+                            <!-- Quick Reports -->
+                            <div class="mb-4">
+                                <h6 class="mb-3"><i class="bi bi-file-earmark-text"></i> Quick Reports</h6>
+                                <div class="btn-group" role="group">
+                                    <button type="button" class="btn btn-primary" onclick="loadDailyReport()">
+                                        <i class="bi bi-calendar-day"></i> Daily Report
+                                    </button>
+                                    <button type="button" class="btn btn-primary" onclick="loadWeeklyReport()">
+                                        <i class="bi bi-calendar-week"></i> Weekly Report
+                                    </button>
+                                </div>
+                            </div>
+                            <hr>
+                            
+                            <!-- Search Domain -->
+                            <div class="mb-4">
+                                <h6 class="mb-3"><i class="bi bi-globe"></i> Search Domain</h6>
+                                <div class="input-group mb-2">
+                                    <input type="text" class="form-control" id="domainSearchInput" placeholder="Enter domain (e.g., gmail.com)" onkeypress="if(event.key==='Enter') searchDomain()">
+                                    <button class="btn btn-outline-primary" type="button" onclick="searchDomain()">
+                                        <i class="bi bi-search"></i> Search
+                                    </button>
+                                </div>
+                                <div id="domainSearchResults" class="mt-3"></div>
+                            </div>
+                            <hr>
+                            
+                            <!-- Search Organization -->
+                            <div class="mb-4">
+                                <h6 class="mb-3"><i class="bi bi-building"></i> Search Organization</h6>
+                                <div class="input-group mb-2">
+                                    <input type="text" class="form-control" id="orgSearchInput" placeholder="Enter organization index or name" onkeypress="if(event.key==='Enter') searchOrganization()">
+                                    <button class="btn btn-outline-primary" type="button" onclick="searchOrganization()">
+                                        <i class="bi bi-search"></i> Search
+                                    </button>
+                                </div>
+                                <div id="orgSearchResults" class="mt-3"></div>
+                            </div>
+                            <hr>
+                            
+                            <!-- View Domain Indexes -->
+                            <div class="mb-4">
+                                <h6 class="mb-3"><i class="bi bi-list-ul"></i> View Domain Indexes</h6>
+                                <p class="small mb-2" style="color: var(--text-secondary);">Find which organization indexes contain a specific domain</p>
+                                <div class="input-group mb-2">
+                                    <input type="text" class="form-control" id="domainIndexInput" placeholder="Enter domain (e.g., hotmail.com)" onkeypress="if(event.key==='Enter') viewDomainIndexes()">
+                                    <button class="btn btn-outline-primary" type="button" onclick="viewDomainIndexes()">
+                                        <i class="bi bi-list-check"></i> View Indexes
+                                    </button>
+                                </div>
+                                <div id="domainIndexResults" class="mt-3"></div>
+                            </div>
+                            <hr>
+                            
+                            <!-- Count Archives Domains -->
+                            <div class="mb-4">
+                                <h6 class="mb-3"><i class="bi bi-archive"></i> Count Archives Domains</h6>
+                                <p class="small mb-2" style="color: var(--text-secondary);">Count domain occurrences in archives collection (archives/archives) filtered by <strong style="color: var(--text-primary);">inserted_time</strong></p>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label small" style="color: var(--text-secondary);">Time Period</label>
+                                        <select class="form-select form-select-sm" id="archivesDomainCountPeriod">
+                                            <option value="daily">Last 24 Hours</option>
+                                            <option value="weekly" selected>Last 7 Days</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <label class="form-label small" style="color: var(--text-secondary);">Domain Pattern (optional)</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control form-control-sm" id="archivesDomainCountInput" placeholder="Enter domain pattern (e.g., cosigma.io) or leave empty for all" onkeypress="if(event.key==='Enter') countArchivesDomains()">
+                                            <button class="btn btn-outline-primary btn-sm" type="button" onclick="countArchivesDomains()">
+                                                <i class="bi bi-calculator"></i> Count
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="archivesDomainCountResults" class="mt-3"></div>
+                            </div>
+                            <hr>
+                            
+                            <!-- Count Alerts Domains -->
+                            <div class="mb-4">
+                                <h6 class="mb-3"><i class="bi bi-bar-chart-line"></i> Count Alerts Domains</h6>
+                                <p class="small mb-2" style="color: var(--text-secondary);">Count domain occurrences in alerts collection (backoffice/alert/domains) filtered by <strong style="color: var(--text-primary);">updated_date</strong></p>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label small" style="color: var(--text-secondary);">Time Period</label>
+                                        <select class="form-select form-select-sm" id="alertsDomainCountPeriod">
+                                            <option value="daily">Last 24 Hours</option>
+                                            <option value="weekly" selected>Last 7 Days</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <label class="form-label small" style="color: var(--text-secondary);">Domain Pattern (optional)</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control form-control-sm" id="alertsDomainCountInput" placeholder="Enter domain pattern (e.g., cosigma.io) or leave empty for all" onkeypress="if(event.key==='Enter') countAlertsDomains()">
+                                            <button class="btn btn-outline-primary btn-sm" type="button" onclick="countAlertsDomains()">
+                                                <i class="bi bi-calculator"></i> Count
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="alertsDomainCountResults" class="mt-3"></div>
+                            </div>
+                            <hr>
+                            
+                            <!-- Search Alerts Domain -->
+                            <div class="mb-4">
+                                <h6 class="mb-3"><i class="bi bi-search-heart"></i> Search Alerts Domain</h6>
+                                <p class="small mb-2" style="color: var(--text-secondary);">Search for alerts containing a specific domain using regex, filtered by updated_date</p>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label small" style="color: var(--text-secondary);">Time Period</label>
+                                        <select class="form-select form-select-sm" id="alertsDomainSearchPeriod">
+                                            <option value="daily">Last 24 Hours</option>
+                                            <option value="weekly" selected>Last 7 Days</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <label class="form-label small" style="color: var(--text-secondary);">Domain Pattern</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control form-control-sm" id="alertsDomainSearchInput" placeholder="Enter domain pattern (e.g., cosigma.io)" onkeypress="if(event.key==='Enter') searchAlertsDomain()">
+                                            <button class="btn btn-outline-primary btn-sm" type="button" onclick="searchAlertsDomain()">
+                                                <i class="bi bi-search"></i> Search
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="alertsDomainSearchResults" class="mt-3"></div>
+                            </div>
+                            <hr>
+                            
+                            <!-- Search HWID -->
+                            <div class="mb-4">
+                                <h6 class="mb-3"><i class="bi bi-cpu"></i> Search HWID</h6>
+                                <p class="small mb-2" style="color: var(--text-secondary);">Search for unique HWIDs from detections array, filtered by created_date</p>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label small" style="color: var(--text-secondary);">Time Period</label>
+                                        <select class="form-select form-select-sm" id="hwidSearchPeriod">
+                                            <option value="daily">Last 24 Hours</option>
+                                            <option value="weekly" selected>Last 7 Days</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <label class="form-label small" style="color: var(--text-secondary);">HWID Pattern (optional)</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control form-control-sm" id="hwidSearchInput" placeholder="Enter HWID pattern (e.g., f7592E93) or leave empty for all" onkeypress="if(event.key==='Enter') searchHWID()">
+                                            <button class="btn btn-outline-primary btn-sm" type="button" onclick="searchHWID()">
+                                                <i class="bi bi-search"></i> Search
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="hwidSearchResults" class="mt-3"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="{{ url_for('static', filename='dashboard.js') }}?v=20260315"></script>
+</body>
+</html>
