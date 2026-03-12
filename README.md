@@ -179,17 +179,6 @@ python scripts/count_credentials_weekly.py
 python scripts/count_hwid_weekly.py
 ```
 
-### Setup Cache
-
-```bash
-python tools/setup_cache.py
-```
-
-### Cache Ingestion (Cronjob)
-
-```bash
-python tools/cache_ingest.py
-```
 
 ## 📝 License
 

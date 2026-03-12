@@ -25,16 +25,21 @@ scp -r . user@server:~/tuan/infra/
 
 ```bash
 # SSH vào server
-ssh user@axilens-preprod
+ssh user@server
 
 # Di chuyển vào thư mục
 cd ~/tuan/infra
 
-# Copy .env.example thành .env (nếu chưa có)
-cp .env.example .env
-
-# Chỉnh sửa .env với MongoDB connection thực tế
+# Tạo file .env với MongoDB connection
 nano .env
+```
+
+Thêm vào `.env`:
+```env
+MONGODB_URL=mongodb://your-mongodb-connection-string
+MONGODB_TIMEOUT_MS=3000
+MONGODB_MAX_POOL_SIZE=50
+MONGODB_MIN_POOL_SIZE=5
 ```
 
 ## Bước 3: Install Dependencies
@@ -49,73 +54,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Bước 4: Setup Cache Collection
-
-```bash
-# Chạy script setup cache với TTL index
-python3 tools/setup_cache.py
-```
-
-Output mong đợi:
-```
-[OK] Connected to MongoDB
-[OK] TTL index created on expires_at field
-[OK] Cache retention: 10 days
-```
-
-## Bước 5: Test Cache Ingestion
-
-```bash
-# Chạy thử cache ingestion
-python3 tools/cache_ingest.py
-```
-
-Kiểm tra kết quả:
-```bash
-# Verify cache data
-python3 -c "
-from pymongo import MongoClient
-from dotenv import load_dotenv
-import os
-from datetime import datetime, timezone
-load_dotenv()
-client = MongoClient(os.getenv('MONGODB_URL'))
-cache = client['cache']['stats']
-print('Total cache documents:', cache.count_documents({}))
-for doc in cache.find().limit(5):
-    print(f\"  {doc['_id']}: expires_at={doc['expires_at']}\")
-"
-```
-
-## Bước 6: Setup Cronjob
-
-### Kiểm tra cronjob hiện tại:
-```bash
-crontab -l
-```
-
-### Thêm cronjob mới:
-```bash
-crontab -e
-```
-
-### Thêm dòng sau (chạy mỗi 5 phút):
-```bash
-*/5 * * * * cd /path/to/infra && /usr/bin/python3 tools/cache_ingest.py >> /var/log/cache_ingest.log 2>&1
-```
-
-**Lưu ý:** Điều chỉnh đường dẫn Python và thư mục cho đúng với server của bạn.
-
-### Verify cronjob:
-```bash
-# Xem lại cronjob đã thêm
-crontab -l
-
-# Check log sau vài phút
-tail -f /var/log/cache_ingest.log
-```
-
-## Bước 7: Deploy Flask App (Dashboard)
+## Bước 4: Chạy ứng dụng
 
 ### Option 1: Chạy trực tiếp (Development)
 ```bash
@@ -143,7 +82,7 @@ Description=MongoDB Dashboard Service
 After=network.target
 
 [Service]
-User=tuan
+User=your-user
 WorkingDirectory=/path/to/infra
 Environment="PATH=/usr/bin:/usr/local/bin"
 ExecStart=/usr/bin/gunicorn -w 4 -b 0.0.0.0:5000 app:app
@@ -161,7 +100,7 @@ sudo systemctl start dashboard
 sudo systemctl status dashboard
 ```
 
-## Bước 8: Setup Nginx Reverse Proxy (Optional)
+## Bước 5: Setup Nginx Reverse Proxy (Optional)
 
 Tạo file `/etc/nginx/sites-available/dashboard`:
 ```nginx
@@ -185,26 +124,9 @@ sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-## Bước 9: Verify Everything
+## Bước 6: Verify Everything
 
-### 1. Check Cache Ingestion:
-```bash
-# Xem log cronjob
-tail -f /var/log/cache_ingest.log
-
-# Check cache data
-python3 -c "
-from pymongo import MongoClient
-from dotenv import load_dotenv
-import os
-load_dotenv()
-client = MongoClient(os.getenv('MONGODB_URL'))
-cache = client['cache']['stats']
-print('Cache documents:', cache.count_documents({}))
-"
-```
-
-### 2. Test Dashboard:
+### Test Dashboard:
 ```bash
 # Test API endpoint
 curl http://localhost:5000/api/stats?period=daily
@@ -213,29 +135,16 @@ curl http://localhost:5000/api/stats?period=daily
 # http://your-server-ip:5000
 ```
 
-### 3. Monitor Performance:
+### Monitor Performance:
 ```bash
 # Check process
 ps aux | grep python
 
 # Check logs
-tail -f /var/log/cache_ingest.log
 tail -f /var/log/dashboard.log
 ```
 
 ## Troubleshooting
-
-### Cronjob không chạy:
-```bash
-# Check cron service
-sudo systemctl status cron
-
-# Check cron logs
-grep CRON /var/log/syslog
-
-# Test manual
-cd ~/tuan/infra && python3 tools/cache_ingest.py
-```
 
 ### Dashboard không start:
 ```bash
@@ -249,9 +158,9 @@ tail -f /var/log/dashboard.log
 which python3
 ```
 
-### Cache không update:
+### MongoDB connection issues:
 ```bash
-# Check MongoDB connection
+# Test MongoDB connection
 python3 -c "
 from pymongo import MongoClient
 from dotenv import load_dotenv
@@ -268,32 +177,25 @@ print('MongoDB connection OK')
 ```
 /path/to/infra/
 ├── app.py                    # Flask dashboard
-├── cache_ingest.py          # Cronjob script
-├── setup_cache.py           # Setup script
-├── setup_indexes.py         # Index setup
+├── config.py                 # Configuration
+├── db_helpers.py             # Database helpers
 ├── count_*.py               # CLI scripts
 ├── .env                     # Environment config
 ├── requirements.txt         # Dependencies
 ├── templates/              # HTML templates
 ├── static/                 # CSS, JS, images
-└── public/                 # Logo
+└── docs/                   # Documentation
 ```
 
 ## Quick Commands Reference
 
 ```bash
-# Run cache ingestion manually
-cd ~/tuan/infra && python3 tools/cache_ingest.py
-
-# Check cache status
-python3 -c "from pymongo import MongoClient; from dotenv import load_dotenv; import os; load_dotenv(); client = MongoClient(os.getenv('MONGODB_URL')); print('Cache docs:', client['cache']['stats'].count_documents({}))"
-
-# View cronjob
-crontab -l
-
 # Restart dashboard service
 sudo systemctl restart dashboard
 
 # View logs
-tail -f /var/log/cache_ingest.log
+tail -f /var/log/dashboard.log
+
+# Check service status
+sudo systemctl status dashboard
 ```

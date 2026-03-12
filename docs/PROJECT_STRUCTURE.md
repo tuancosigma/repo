@@ -22,11 +22,8 @@ Tài liệu mô tả cấu trúc thư mục và tổ chức code của project.
 │   ├── count_credentials_daily.py
 │   ├── count_credentials_weekly.py
 │   ├── count_hwid_daily.py
-│   └── count_hwid_weekly.py
-│
-├── tools/                      # Setup và maintenance tools
-│   ├── setup_cache.py          # Khởi tạo cache collections và TTL indexes
-│   └── cache_ingest.py         # Populate cache (chạy qua cronjob)
+│   ├── count_hwid_weekly.py
+│   └── count_organizations.py
 │
 ├── tests/                      # Test và verification scripts
 │   ├── test_ttl.py             # Test TTL index behavior
@@ -73,11 +70,6 @@ Chứa các CLI scripts để đếm số lượng documents từ MongoDB:
 - Weekly scripts: Đếm trong 7 ngày gần nhất
 - Mỗi script độc lập, có thể chạy riêng lẻ
 
-### tools/
-Chứa các tools để setup và maintain hệ thống:
-- **setup_cache.py**: Khởi tạo cache collections và TTL indexes
-- **cache_ingest.py**: Populate cache với raw documents và aggregated stats (chạy qua cronjob)
-
 ### tests/
 Chứa các scripts để test và verify hệ thống:
 - Test scripts: Kiểm tra behavior của các components
@@ -86,10 +78,8 @@ Chứa các scripts để test và verify hệ thống:
 
 ### docs/
 Chứa tất cả documentation:
-- **README.md**: Main documentation với quick start guide
+- **README.md**: Main documentation với quick start guide (ở root)
 - **DEPLOYMENT.md**: Chi tiết về cách deploy lên production
-- **CRONJOB_SETUP.md**: Hướng dẫn setup cronjob cho cache ingestion
-- **CACHE_TTL_EXPLANATION.md**: Giải thích chi tiết về TTL cache
 - **PROJECT_STRUCTURE.md**: File này
 
 ### templates/
