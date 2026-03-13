@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from pymongo import MongoClient
 import logging
-from config import MONGO_URI, MONGODB_TIMEOUT_MS, MAX_POOL_SIZE, MIN_POOL_SIZE, COLLECTIONS
+from config import MONGO_URI, MONGODB_TIMEOUT_MS, MONGODB_SOCKET_TIMEOUT_MS, MAX_POOL_SIZE, MIN_POOL_SIZE, COLLECTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def get_mongo_client():
             minPoolSize=MIN_POOL_SIZE,
             maxIdleTimeMS=45000,
             connectTimeoutMS=MONGODB_TIMEOUT_MS,
-            socketTimeoutMS=30000
+            socketTimeoutMS=MONGODB_SOCKET_TIMEOUT_MS  # 10 min default for large credentials queries
         )
     return _mongo_client
 
@@ -92,8 +92,8 @@ def build_count_pipeline(date_field, start, end, additional_filters=None, use_gt
     if additional_filters:
         match_filters.update(additional_filters)
     
-    # Log the query for debugging
-    logger.info(f"Query filter for {date_field}: {match_filters} (use_gte_only={use_gte_only}, start={start.isoformat()})")
+    # Log at DEBUG to reduce I/O overhead in production
+    logger.debug(f"Query filter for {date_field}: {match_filters}")
     
     return [
         {"$match": match_filters},
@@ -167,7 +167,7 @@ def build_hwid_pipeline(start, end):
         {"$count": "total"}
     ]
     
-    logger.info(f"HWID pipeline: Match date range {start.isoformat()} to {end.isoformat()}, then unwind detections array and count unique IDs")
+    logger.debug(f"HWID pipeline: Match date range {start.isoformat()} to {end.isoformat()}")
     
     return pipeline
 
@@ -192,7 +192,9 @@ def build_stats_pipelines(start, end):
             {'is_decompressed': True},
             use_gte_only=False
         ),
-        # Credentials: use range ($gte and $lte)
+        # Credentials: use range ($gte and $lte) for performance
+        # $gte only causes timeout because it scans hundreds of millions of records
+        # Range query is much faster and still accurate for the date period
         'credentials': build_count_pipeline(
             'harvest_date', start, end, None,
             use_gte_only=False
@@ -235,33 +237,61 @@ def execute_stats_queries(start, end):
     credentials_col = get_collection('credentials')
     alerts_col = get_collection('alerts')
     
-    # Log ZIP import query for debugging
-    zip_pipeline = pipelines['zip_import']
-    logger.info(f"ZIP import pipeline: {zip_pipeline}")
+    logger.debug(f"Executing stats queries - start={start.isoformat()}, end={end.isoformat()}")
     
-    # Execute queries
-    zip_result = list(archives_col.aggregate(pipelines['zip_import'], allowDiskUse=True))
-    decompressed_result = list(archives_col.aggregate(pipelines['decompressed'], allowDiskUse=True))
-    credentials_result = list(credentials_col.aggregate(pipelines['credentials'], allowDiskUse=True))
-    hwid_result = list(alerts_col.aggregate(pipelines['hwid'], allowDiskUse=True))
-    
-    zip_count = zip_result[0]['total'] if zip_result else 0
-    
-    # Debug: Also try direct count query to verify (using $gte only like script)
+    # Execute each query with error handling and detailed logging
     try:
-        # Match script logic: only $gte (no $lte)
-        direct_count = archives_col.count_documents({
-            "inserted_time": {"$gte": start}
-        })
-        logger.info(f"ZIP import - Aggregation: {zip_count}, Direct count ($gte only): {direct_count} (start: {start.isoformat()}, end: {end.isoformat()})")
-        if zip_count != direct_count:
-            logger.warning(f"Count mismatch! Aggregation={zip_count}, Direct count={direct_count}")
+        zip_result = list(archives_col.aggregate(pipelines['zip_import'], allowDiskUse=True, maxTimeMS=10000))
+        zip_count = zip_result[0]['total'] if zip_result else 0
+        logger.debug(f"ZIP import result: {zip_count}")
     except Exception as e:
-        logger.warning(f"Error in direct count check: {e}")
+        logger.error(f"Error executing ZIP import query: {e}", exc_info=True)
+        zip_count = 0
+    
+    try:
+        decompressed_result = list(archives_col.aggregate(pipelines['decompressed'], allowDiskUse=True, maxTimeMS=10000))
+        decompressed_count = decompressed_result[0]['total'] if decompressed_result else 0
+        logger.debug(f"Decompressed result: {decompressed_count}")
+    except Exception as e:
+        logger.error(f"Error executing decompressed query: {e}", exc_info=True)
+        decompressed_count = 0
+    
+    try:
+        # Credentials query - no maxTimeMS, let it run to completion
+        # Data volume can be hundreds of millions, query may take several minutes
+        credentials_result = list(credentials_col.aggregate(
+            pipelines['credentials'], 
+            allowDiskUse=True
+        ))
+        credentials_count = credentials_result[0]['total'] if credentials_result else 0
+        logger.debug(f"Credentials result: {credentials_count}")
+    except Exception as e:
+        # Log timeout errors but don't fail the entire stats request
+        error_msg = str(e)
+        if 'timed out' in error_msg.lower() or 'timeout' in error_msg.lower():
+            logger.warning(f"Credentials query timeout in stats (returning 0) - query may be too slow for date range")
+        else:
+            logger.error(f"Error executing credentials query: {e}", exc_info=True)
+        credentials_count = 0
+    
+    try:
+        hwid_result = list(alerts_col.aggregate(pipelines['hwid'], allowDiskUse=True, maxTimeMS=10000))
+        hwid_count = hwid_result[0]['total'] if hwid_result else 0
+        logger.debug(f"HWID result: {hwid_count}")
+    except Exception as e:
+        error_msg = str(e)
+        if 'timed out' in error_msg.lower() or 'timeout' in error_msg.lower():
+            logger.warning(f"HWID query timeout (returning 0)")
+        else:
+            logger.error(f"Error executing HWID query: {e}", exc_info=True)
+        hwid_count = 0
+    
+    logger.info(f"Stats query results summary - zip_import={zip_count}, decompressed={decompressed_count}, "
+               f"credentials={credentials_count}, hwid={hwid_count}")
     
     return {
         'zip_import': zip_count,
-        'decompressed': decompressed_result[0]['total'] if decompressed_result else 0,
-        'credentials': credentials_result[0]['total'] if credentials_result else 0,
-        'hwid': hwid_result[0]['total'] if hwid_result else 0
+        'decompressed': decompressed_count,
+        'credentials': credentials_count,
+        'hwid': hwid_count
     }

@@ -77,23 +77,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     
-    // Lazy load charts when visible (Intersection Observer)
-    if ('IntersectionObserver' in window) {
-        const chartObserver = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting && !statsChart) {
-                    loadChartData();
-                    chartObserver.unobserve(entry.target);
-                }
-            });
-        }, { rootMargin: '50px' });
-        
-        const chartContainer = document.getElementById('statsChart')?.parentElement;
-        if (chartContainer) {
-            chartObserver.observe(chartContainer);
-        }
-    }
-    
     // Initialize auto-refresh
     initAutoRefresh();
     
@@ -338,21 +321,18 @@ function applyFilters() {
 }
 
 function loadAllData() {
-    // Load stats first (faster, shows numbers immediately)
+    // Load stats first (fast) - hide loading as soon as stats ready
     loadStats()
-        .then(() => {
-            // Then load chart data (slower, can be lazy loaded)
-            return loadChartData();
-        })
         .then(() => {
             hideLoading();
             updateLastUpdateTime();
             document.getElementById('statsCards').classList.add('fade-in');
+            // Load chart in background - don't block UI
+            loadChartData().catch(e => console.warn('Chart load failed:', e));
         })
         .catch(error => {
             hideLoading();
             console.error('Error loading data:', error);
-            // Show user-friendly error message
             const errorMsg = document.createElement('div');
             errorMsg.className = 'alert alert-warning alert-dismissible fade show';
             errorMsg.innerHTML = `
@@ -1806,9 +1786,62 @@ function exportCurrentData(format) {
         link.click();
         URL.revokeObjectURL(url);
     } else if (format === 'pdf') {
-        // For PDF, redirect to backend endpoint
-        const url = buildApiUrl('/api/export-pdf');
-        window.open(url, '_blank');
+        // Show loading indicator
+        const loadingToast = document.createElement('div');
+        loadingToast.className = 'alert alert-info position-fixed top-0 end-0 m-3';
+        loadingToast.style.zIndex = '9999';
+        loadingToast.innerHTML = '<i class="bi bi-hourglass-split"></i> Đang tạo PDF...';
+        document.body.appendChild(loadingToast);
+        
+        // For PDF, send data to backend endpoint
+        const exportData = {
+            type: type,
+            data: data,
+            title: type === 'report' ? 'Statistics Report' : `${type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())} Results`
+        };
+        
+        fetch(buildApiUrl('/api/export-pdf-search'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(exportData)
+        })
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => { throw new Error(err.error || 'Export failed'); });
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            loadingToast.remove();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${type}_${new Date().toISOString().split('T')[0]}.pdf`;
+            link.click();
+            URL.revokeObjectURL(url);
+            
+            // Show success message
+            const successToast = document.createElement('div');
+            successToast.className = 'alert alert-success position-fixed top-0 end-0 m-3';
+            successToast.style.zIndex = '9999';
+            successToast.innerHTML = '<i class="bi bi-check-circle"></i> PDF đã được tạo thành công!';
+            document.body.appendChild(successToast);
+            setTimeout(() => successToast.remove(), 3000);
+        })
+        .catch(error => {
+            loadingToast.remove();
+            console.error('PDF export error:', error);
+            
+            // Show error message
+            const errorToast = document.createElement('div');
+            errorToast.className = 'alert alert-danger position-fixed top-0 end-0 m-3';
+            errorToast.style.zIndex = '9999';
+            errorToast.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Lỗi: ${error.message}`;
+            document.body.appendChild(errorToast);
+            setTimeout(() => errorToast.remove(), 5000);
+        });
     }
 }
 

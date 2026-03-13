@@ -10,6 +10,9 @@ if not MONGO_URI:
     raise ValueError("MONGODB_URL environment variable is not set")
 
 MONGODB_TIMEOUT_MS = int(os.getenv("MONGODB_TIMEOUT_MS", "3000"))
+# Socket timeout for long-running queries (e.g. credentials with hundreds of millions of records)
+# Default 10 minutes - set MONGODB_SOCKET_TIMEOUT_MS in .env to override
+MONGODB_SOCKET_TIMEOUT_MS = int(os.getenv("MONGODB_SOCKET_TIMEOUT_MS", "600000"))
 MAX_POOL_SIZE = int(os.getenv("MONGODB_MAX_POOL_SIZE", "50"))
 MIN_POOL_SIZE = int(os.getenv("MONGODB_MIN_POOL_SIZE", "5"))
 
