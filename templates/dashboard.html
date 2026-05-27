@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>COSIGMA - MongoDB Statistics Dashboard</title>
+    <title>Breachunt - MongoDB Statistics Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -13,8 +13,8 @@
         <div class="container-fluid">
             <div class="navbar-brand d-flex align-items-center gap-3" style="background: transparent !important;">
                 <div class="d-flex align-items-center gap-2" style="background: transparent !important;">
-                    <img src="{{ url_for('static', filename='logo.png') }}" alt="COSIGMA Logo" class="logo-img" style="background: transparent !important;">
-                    <h1 class="h5 mb-0 fw-bold" style="color: var(--text-primary) !important; background: transparent !important;">COSIGMA</h1>
+                    <img src="{{ url_for('static', filename='logo.png') }}" alt="Breachunt Logo" class="logo-img" style="background: transparent !important;">
+                    <h1 class="h5 mb-0 fw-bold" style="color: var(--text-primary) !important; background: transparent !important;">Breachunt</h1>
                 </div>
             </div>
             <div class="d-flex align-items-center gap-3">
@@ -52,8 +52,8 @@
                             <div class="col-lg-3">
                                 <label class="form-label"><i class="bi bi-calendar-range"></i> Time Period</label>
                                 <select class="form-select" id="periodSelect" onchange="onPeriodChange()">
-                                    <option value="daily">Last 24 Hours</option>
-                                    <option value="weekly" selected>Last 7 Days</option>
+                                    <option value="daily" selected>Last 24 Hours</option>
+                                    <option value="weekly">Last 7 Days</option>
                                 </select>
                             </div>
                             <div class="col-lg-3">
@@ -325,7 +325,7 @@
                                     <div class="col-md-8">
                                         <label class="form-label small" style="color: var(--text-secondary);">Domain Pattern (optional)</label>
                                         <div class="input-group">
-                                            <input type="text" class="form-control form-control-sm" id="archivesDomainCountInput" placeholder="Enter domain pattern (e.g., cosigma.io) or leave empty for all" onkeypress="if(event.key==='Enter') countArchivesDomains()">
+                                            <input type="text" class="form-control form-control-sm" id="archivesDomainCountInput" placeholder="Enter domain pattern (e.g., breachunt.com) or leave empty for all" onkeypress="if(event.key==='Enter') countArchivesDomains()">
                                             <button class="btn btn-outline-primary btn-sm" type="button" onclick="countArchivesDomains()">
                                                 <i class="bi bi-calculator"></i> Count
                                             </button>
@@ -351,7 +351,7 @@
                                     <div class="col-md-8">
                                         <label class="form-label small" style="color: var(--text-secondary);">Domain Pattern (optional)</label>
                                         <div class="input-group">
-                                            <input type="text" class="form-control form-control-sm" id="alertsDomainCountInput" placeholder="Enter domain pattern (e.g., cosigma.io) or leave empty for all" onkeypress="if(event.key==='Enter') countAlertsDomains()">
+                                            <input type="text" class="form-control form-control-sm" id="alertsDomainCountInput" placeholder="Enter domain pattern (e.g., breachunt.com) or leave empty for all" onkeypress="if(event.key==='Enter') countAlertsDomains()">
                                             <button class="btn btn-outline-primary btn-sm" type="button" onclick="countAlertsDomains()">
                                                 <i class="bi bi-calculator"></i> Count
                                             </button>
@@ -377,7 +377,7 @@
                                     <div class="col-md-8">
                                         <label class="form-label small" style="color: var(--text-secondary);">Domain Pattern</label>
                                         <div class="input-group">
-                                            <input type="text" class="form-control form-control-sm" id="alertsDomainSearchInput" placeholder="Enter domain pattern (e.g., cosigma.io)" onkeypress="if(event.key==='Enter') searchAlertsDomain()">
+                                            <input type="text" class="form-control form-control-sm" id="alertsDomainSearchInput" placeholder="Enter domain pattern (e.g., breachunt.com)" onkeypress="if(event.key==='Enter') searchAlertsDomain()">
                                             <button class="btn btn-outline-primary btn-sm" type="button" onclick="searchAlertsDomain()">
                                                 <i class="bi bi-search"></i> Search
                                             </button>

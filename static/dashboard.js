@@ -200,7 +200,7 @@ function updateDateRangeDisplay() {
     All dates displayed in UTC to match server-side logic.
     France is UTC+1, but all internal operations use UTC.
     */
-    const period = document.getElementById('periodSelect')?.value || 'weekly';
+    const period = document.getElementById('periodSelect')?.value || 'daily';
     const { start, end } = getPeriodDates(period);
     
     const formatDate = (date) => {
@@ -406,7 +406,7 @@ function buildApiUrl(endpoint) {
     
     IMPORTANT: All dates are sent in UTC format (+00:00) to match server-side UTC 0 requirement.
     */
-    const period = document.getElementById('periodSelect')?.value || 'weekly';
+    const period = document.getElementById('periodSelect')?.value || 'daily';
     const { start, end } = getPeriodDates(period);
     
     let url = `${endpoint}?period=${period}`;
@@ -921,6 +921,9 @@ function displayReportResults(title, data) {
                     <tr><td>Zip Archives Imported</td><td>${(data.stats.zip_import || 0).toLocaleString()}</td></tr>
                     <tr><td>Decompressed Archives</td><td>${(data.stats.decompressed || 0).toLocaleString()}</td></tr>
                     <tr><td>Credentials Found</td><td>${(data.stats.credentials || 0).toLocaleString()}</td></tr>
+                    ${data.stats.credential_types ? Object.entries(data.stats.credential_types).map(([type, count]) => `
+                        <tr class="table-light"><td style="padding-left: 20px;"><i class="bi bi-arrow-return-right text-muted me-1"></i> ${type === 'telegram' ? 'Telegram' : type === 'telegram_ulp' ? 'Telegram ULP' : type} (source.type)</td><td>${count.toLocaleString()}</td></tr>
+                    `).join('') : ''}
                     <tr><td>HWID Found</td><td>${(data.stats.hwid || 0).toLocaleString()}</td></tr>
                     <tr><td>Total Organizations</td><td>${(data.stats.total_organizations || 0).toLocaleString()}</td></tr>
                     <tr><td>Total Domains</td><td>${(data.stats.total_domains || 0).toLocaleString()}</td></tr>
@@ -1656,7 +1659,7 @@ function exportJSON() {
             // Enhance JSON with metadata
             const exportData = {
                 report_metadata: {
-                    company: 'COSIGMA',
+                    company: 'Breachunt',
                     generated_at: new Date().toISOString(),
                     period: document.getElementById('periodSelect').value,
                     start_date: data.start_date,
@@ -1742,7 +1745,17 @@ function exportCurrentData(format) {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `${type}_${new Date().toISOString().split('T')[0]}.json`;
+        
+        let downloadName = `${type}_${new Date().toISOString().split('T')[0]}.json`;
+        if (type === 'report' && data.period) {
+            const startDateStr = data.start ? data.start.split('T')[0] : new Date().toISOString().split('T')[0];
+            if (data.period === 'daily') {
+                downloadName = `Daily_report_${startDateStr}.json`;
+            } else if (data.period === 'weekly') {
+                downloadName = `Weekly_report_${startDateStr}.json`;
+            }
+        }
+        link.download = downloadName;
         link.click();
         URL.revokeObjectURL(url);
     } else if (format === 'csv') {
@@ -1782,7 +1795,17 @@ function exportCurrentData(format) {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `${type}_${new Date().toISOString().split('T')[0]}.csv`;
+        
+        let downloadName = `${type}_${new Date().toISOString().split('T')[0]}.csv`;
+        if (type === 'report' && data.period) {
+            const startDateStr = data.start ? data.start.split('T')[0] : new Date().toISOString().split('T')[0];
+            if (data.period === 'daily') {
+                downloadName = `Daily_report_${startDateStr}.csv`;
+            } else if (data.period === 'weekly') {
+                downloadName = `Weekly_report_${startDateStr}.csv`;
+            }
+        }
+        link.download = downloadName;
         link.click();
         URL.revokeObjectURL(url);
     } else if (format === 'pdf') {
@@ -1818,7 +1841,17 @@ function exportCurrentData(format) {
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `${type}_${new Date().toISOString().split('T')[0]}.pdf`;
+            
+            let downloadName = `${type}_${new Date().toISOString().split('T')[0]}.pdf`;
+            if (type === 'report' && data.period) {
+                const startDateStr = data.start ? data.start.split('T')[0] : new Date().toISOString().split('T')[0];
+                if (data.period === 'daily') {
+                    downloadName = `Daily_report_${startDateStr}.pdf`;
+                } else if (data.period === 'weekly') {
+                    downloadName = `Weekly_report_${startDateStr}.pdf`;
+                }
+            }
+            link.download = downloadName;
             link.click();
             URL.revokeObjectURL(url);
             

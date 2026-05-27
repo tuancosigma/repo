@@ -252,18 +252,20 @@ def get_data_timestamps():
         # Get oldest and newest dates from source collections
         dated_info = {}
         
-        # Helper function to get date range for a collection
+        # Helper function to get date range for a collection (O(1) optimized using sort & limit)
         def get_date_range(collection_name, date_field):
             try:
                 coll = get_collection(collection_name)
-                result = list(coll.aggregate([
-                    {"$group": {
-                        "_id": None,
-                        "oldest": {"$min": f"${date_field}"},
-                        "newest": {"$max": f"${date_field}"}
-                    }}
-                ], allowDiskUse=True))
-                return result[0] if result else None
+                # Query index instead of doing full collection scan via $group
+                oldest_doc = list(coll.find({date_field: {"$ne": None}}, {date_field: 1}).sort(date_field, 1).limit(1))
+                newest_doc = list(coll.find({date_field: {"$ne": None}}, {date_field: 1}).sort(date_field, -1).limit(1))
+                
+                oldest = oldest_doc[0].get(date_field) if oldest_doc else None
+                newest = newest_doc[0].get(date_field) if newest_doc else None
+                
+                if oldest is not None or newest is not None:
+                    return {"oldest": oldest, "newest": newest}
+                return None
             except Exception as e:
                 logger.warning(f"Error getting date range for {collection_name}: {e}")
                 return None
@@ -272,19 +274,25 @@ def get_data_timestamps():
         for coll_name, coll_config in COLLECTIONS.items():
             try:
                 if coll_name == 'organizations':
-                    # Special handling for organizations
+                    # Special handling for organizations (O(1) optimized using sort & limit)
                     org_col = get_collection('organizations')
-                    org_result = list(org_col.aggregate([
-                        {"$group": {
-                            "_id": None,
-                            "oldest_created": {"$min": "$created_at"},
-                            "newest_created": {"$max": "$created_at"},
-                            "oldest_updated": {"$min": "$updated_at"},
-                            "newest_updated": {"$max": "$updated_at"}
-                        }}
-                    ], allowDiskUse=True))
-                    if org_result and org_result[0]:
-                        org_data = org_result[0].copy()
+                    try:
+                        old_c = list(org_col.find({"created_at": {"$ne": None}}, {"created_at": 1}).sort("created_at", 1).limit(1))
+                        new_c = list(org_col.find({"created_at": {"$ne": None}}, {"created_at": 1}).sort("created_at", -1).limit(1))
+                        old_u = list(org_col.find({"updated_at": {"$ne": None}}, {"updated_at": 1}).sort("updated_at", 1).limit(1))
+                        new_u = list(org_col.find({"updated_at": {"$ne": None}}, {"updated_at": 1}).sort("updated_at", -1).limit(1))
+                        
+                        org_data = {
+                            "oldest_created": old_c[0].get("created_at") if old_c else None,
+                            "newest_created": new_c[0].get("created_at") if new_c else None,
+                            "oldest_updated": old_u[0].get("updated_at") if old_u else None,
+                            "newest_updated": new_u[0].get("updated_at") if new_u else None
+                        }
+                    except Exception as org_e:
+                        logger.warning(f"Error optimizing organizations date range: {org_e}")
+                        org_data = {}
+                    
+                    if org_data:
                         # Convert datetime fields to ISO strings, normalized to UTC 0
                         for key in ['oldest_created', 'newest_created', 'oldest_updated', 'newest_updated']:
                             if key in org_data and org_data[key] is not None:
@@ -548,6 +556,7 @@ def get_chart_data_optimized(start, end, intervals, delta, period='weekly'):
     - Uses maxTimeMS=10000 for all queries to prevent hanging
     - Skips intervals on timeout instead of failing entire request
     """
+    labels = []
     try:
         archives_col = get_collection('archives')
         credentials_col = get_collection('credentials')
@@ -555,7 +564,6 @@ def get_chart_data_optimized(start, end, intervals, delta, period='weekly'):
         
         credentials_timeout_count = [0]  # Use list for mutable access in nested closure
         
-        labels = []
         datasets = {
             'zip_import': [0] * intervals,
             'decompressed': [0] * intervals,
@@ -584,24 +592,24 @@ def get_chart_data_optimized(start, end, intervals, delta, period='weekly'):
             hwid_p = build_hwid_pipeline(interval_start, interval_end)
             results = {}
             try:
-                r = list(archives_col.aggregate(zip_p, allowDiskUse=True, maxTimeMS=10000))
+                r = list(archives_col.aggregate(zip_p, allowDiskUse=True))
                 results['zip'] = r[0]['total'] if r else 0
             except Exception:
                 results['zip'] = 0
             try:
-                r = list(archives_col.aggregate(decomp_p, allowDiskUse=True, maxTimeMS=10000))
+                r = list(archives_col.aggregate(decomp_p, allowDiskUse=True))
                 results['decomp'] = r[0]['total'] if r else 0
             except Exception:
                 results['decomp'] = 0
             try:
-                r = list(credentials_col.aggregate(creds_p, allowDiskUse=True, maxTimeMS=10000))
+                r = list(credentials_col.aggregate(creds_p, allowDiskUse=True))
                 results['creds'] = r[0]['total'] if r else 0
             except Exception as e:
                 if 'timed out' in str(e).lower() or 'timeout' in str(e).lower():
                     credentials_timeout_count[0] += 1
                 results['creds'] = 0
             try:
-                r = list(alerts_col.aggregate(hwid_p, allowDiskUse=True, maxTimeMS=10000))
+                r = list(alerts_col.aggregate(hwid_p, allowDiskUse=True))
                 results['hwid'] = r[0]['total'] if r else 0
             except Exception:
                 results['hwid'] = 0
@@ -609,16 +617,16 @@ def get_chart_data_optimized(start, end, intervals, delta, period='weekly'):
         
         interval_args = [(i, start + delta * i, start + delta * (i + 1)) for i in range(intervals)]
         with ThreadPoolExecutor(max_workers=min(intervals, 8)) as executor:
-            futures = {executor.submit(_query_interval, args): args[0] for args in interval_args}
-            for future in as_completed(futures):
-                try:
-                    i, results = future.result()
-                    datasets['zip_import'][i] = results['zip']
-                    datasets['decompressed'][i] = results['decomp']
-                    datasets['credentials'][i] = results['creds']
-                    datasets['hwid'][i] = results['hwid']
-                except Exception as e:
-                    logger.warning(f"Error processing interval: {e}")
+             futures = {executor.submit(_query_interval, args): args[0] for args in interval_args}
+             for future in as_completed(futures):
+                 try:
+                     i, results = future.result()
+                     datasets['zip_import'][i] = results['zip']
+                     datasets['decompressed'][i] = results['decomp']
+                     datasets['credentials'][i] = results['creds']
+                     datasets['hwid'][i] = results['hwid']
+                 except Exception as e:
+                     logger.warning(f"Error processing interval: {e}")
         
         if credentials_timeout_count[0] > 0:
             logger.warning(f"Credentials query had {credentials_timeout_count[0]}/{intervals} timeouts")
@@ -649,7 +657,7 @@ def get_stats():
     Uses cache with 60 second TTL for better performance.
     """
     try:
-        period = request.args.get('period', 'weekly')  # Changed default to 'weekly' to match frontend
+        period = request.args.get('period', 'daily')  # Changed default to 'daily' to match frontend
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
         
@@ -708,7 +716,7 @@ def get_chart_data():
     - Uses cache with 5 minute TTL for better performance
     """
     try:
-        period = request.args.get('period', 'weekly')  # Changed default to 'weekly' to match frontend
+        period = request.args.get('period', 'daily')  # Changed default to 'daily' to match frontend
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
         
@@ -766,7 +774,16 @@ def export_csv():
         end_date = request.args.get('end_date')
         
         start, end = parse_date_range(period, start_date, end_date)
-        stats = get_stats_from_db(start, end)
+        
+        # Check cache first (reuse the same stats cache)
+        cache_key = get_cache_key('stats', period=period, start_date=start_date, end_date=end_date)
+        cached_result = get_cached(cache_key, CACHE_TTL_STATS)
+        if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
+            logger.info("CSV export - Cache HIT for stats data")
+            stats = cached_result['stats']
+        else:
+            logger.info("CSV export - Cache MISS for stats data, querying database")
+            stats = get_stats_from_db(start, end)
         
         # Ensure stats is a dict and has required keys
         if not isinstance(stats, dict):
@@ -779,7 +796,7 @@ def export_csv():
         csv_lines = []
         
         # Header section
-        csv_lines.append("COSIGMA - MongoDB Statistics Report")
+        csv_lines.append("Breachunt - MongoDB Statistics Report")
         csv_lines.append(f"Report Period: {period.upper()}")
         csv_lines.append(f"Date Range: {start.strftime('%Y-%m-%d %H:%M:%S')} to {end.strftime('%Y-%m-%d %H:%M:%S')}")
         csv_lines.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
@@ -876,658 +893,569 @@ def export_csv():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@app.route('/api/export-pdf')
-def export_pdf():
-    """Export comprehensive statistics as professional PDF report."""
+def _generate_pdf_report(period, start_date, end_date):
+    """Core logic to generate the comprehensive professional PDF report matching the sample layout."""
     global PDF_STYLES
     
     # Initialize PDF styles
     styles = PDF_STYLES if PDF_STYLES is not None else None
-    
     if styles is None:
+        styles = getSampleStyleSheet()
+        PDF_STYLES = styles
+        
+    start, end = parse_date_range(period, start_date, end_date)
+    
+    # Ensure UTC 0
+    start = normalize_to_utc(start)
+    end = normalize_to_utc(end)
+    
+    # Check cache first
+    cache_key = get_cache_key('stats', period=period, start_date=start_date, end_date=end_date)
+    cached_result = get_cached(cache_key, CACHE_TTL_STATS)
+    if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
+        stats = cached_result['stats']
+    else:
+        stats = get_stats_from_db(start, end)
+        
+    if not isinstance(stats, dict):
+        stats = {}
+        
+    # Format dates
+    period_text = "Daily Report (24 hours)" if period == 'daily' else "Weekly Report (7 days)"
+    date_range = f"{start.strftime('%Y-%m-%d %H:%M')} to {end.strftime('%Y-%m-%d %H:%M')}"
+    
+    # Breachunt brand colors
+    cosigma_cyan = colors.HexColor('#06b6d4')
+    cosigma_blue = colors.HexColor('#0ea5e9')
+    cosigma_purple = colors.HexColor('#a78bfa')
+    cosigma_orange = colors.HexColor('#fb923c')
+    cosigma_gray = colors.HexColor('#94a3b8')
+    cosigma_dark = colors.HexColor('#1e293b')
+    cosigma_light_gray = colors.HexColor('#f8fafc')
+    
+    logo_path = os.path.join(os.path.dirname(__file__), 'static', 'logo.png')
+    logo_exists = os.path.exists(logo_path)
+    
+    buffer = BytesIO()
+    
+    # Total pages callback and page tracker
+    current_page_var = [0]
+    
+    def add_cover_page(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        page_width, page_height = A4
+        
+        # Top header color block
+        canvas_obj.setFillColor(cosigma_cyan)
+        header_height = page_height * 0.30
+        canvas_obj.rect(0, page_height - header_height, page_width, header_height, fill=1, stroke=0)
+        
+        # Logo
+        logo_size = 1.4*inch
+        logo_x = (page_width - logo_size) / 2
+        logo_y = page_height - header_height + (header_height - logo_size) / 2 - 0.1*inch
+        if logo_exists:
+            try:
+                canvas_obj.drawImage(logo_path, logo_x, logo_y, width=logo_size, height=logo_size, preserveAspectRatio=True)
+            except:
+                pass
+        
+        # Company Name
+        canvas_obj.setFont('Times-Roman', 34)
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.drawCentredString(page_width / 2, logo_y - 0.7*inch, 'Breachunt')
+        
+        # Main Title
+        content_start_y = page_height - header_height - 1.8*inch
+        canvas_obj.setFont('Helvetica-Bold', 32)
+        canvas_obj.setFillColor(cosigma_dark)
+        canvas_obj.drawCentredString(page_width / 2, content_start_y, 'MongoDB Statistics Report')
+        
+        # Period
+        canvas_obj.setFont('Helvetica', 20)
+        canvas_obj.setFillColor(cosigma_blue)
+        canvas_obj.drawCentredString(page_width / 2, content_start_y - 0.7*inch, period_text)
+        
+        # Divider
+        canvas_obj.setStrokeColor(cosigma_cyan)
+        canvas_obj.setLineWidth(2.5)
+        canvas_obj.line(1.0*inch, content_start_y - 1.25*inch, page_width - 1.0*inch, content_start_y - 1.25*inch)
+        
+        # Date Range
+        canvas_obj.setFont('Helvetica', 14)
+        canvas_obj.setFillColor(cosigma_gray)
+        canvas_obj.drawCentredString(page_width / 2, content_start_y - 1.7*inch, date_range)
+        
+        # Generated Timestamp
+        bottom_section_y = 3.2*inch
+        canvas_obj.setFont('Helvetica', 11)
+        canvas_obj.setFillColor(cosigma_gray)
+        canvas_obj.drawCentredString(page_width / 2, bottom_section_y, f'Generated: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}')
+        
+        # Footer Company info
+        footer_y = 1.1*inch
+        canvas_obj.setStrokeColor(cosigma_cyan)
+        canvas_obj.setLineWidth(1.2)
+        canvas_obj.line(1.0*inch, footer_y + 0.6*inch, page_width - 1.0*inch, footer_y + 0.6*inch)
+        canvas_obj.setFont('Helvetica', 10)
+        canvas_obj.setFillColor(cosigma_dark)
+        canvas_obj.drawCentredString(page_width / 2, footer_y, 'SIRET: 952 164 911 00010')
+        canvas_obj.drawCentredString(page_width / 2, footer_y - 0.3*inch, '3 terrasse Valmy, 92800 PUTEAUX, France')
+        
+        canvas_obj.restoreState()
+        current_page_var[0] += 1
+        
+    def add_header_footer(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        page_width, page_height = A4
+        current_page_var[0] += 1
+        
+        if current_page_var[0] == 1:
+            canvas_obj.restoreState()
+            return
+            
+        # Header - BREACHUNT logo and text
+        logo_x = 0.5*inch
+        logo_y = page_height - 0.5*inch - 0.6*inch
+        logo_size = 0.7*inch
+        if logo_exists:
+            try:
+                canvas_obj.drawImage(logo_path, logo_x, logo_y, width=logo_size, height=logo_size, preserveAspectRatio=True)
+            except:
+                pass
+        text_x = logo_x + logo_size + 0.15*inch
+        canvas_obj.setFont('Times-Roman', 22)
+        canvas_obj.setFillColor(colors.black)
+        canvas_obj.drawString(text_x, logo_y + logo_size / 2 - 0.15*inch, 'BREACHUNT')
+        
+        # Footer - Page Number and Company info
+        footer_y = 0.4*inch
+        canvas_obj.setFont('Helvetica', 8)
+        canvas_obj.setFillColor(cosigma_gray)
+        page_num = current_page_var[0] - 1
+        canvas_obj.drawRightString(page_width - 0.5*inch, footer_y + 0.2*inch, f'Page {page_num}')
+        canvas_obj.restoreState()
+        
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=0.6*inch,
+        leftMargin=0.6*inch,
+        topMargin=1.2*inch,
+        bottomMargin=1.0*inch
+    )
+    elements = []
+    
+    # Styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=28,
+        textColor=cosigma_cyan,
+        spaceAfter=12,
+        alignment=TA_LEFT,
+        fontName='Helvetica-Bold',
+        leading=32
+    )
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        textColor=cosigma_cyan,
+        spaceAfter=14,
+        spaceBefore=20,
+        fontName='Helvetica-Bold',
+        leading=20
+    )
+    body_style = ParagraphStyle(
+        'Body',
+        parent=styles['Normal'],
+        fontSize=11,
+        textColor=cosigma_dark,
+        spaceAfter=14,
+        alignment=TA_LEFT,
+        fontName='Helvetica',
+        leading=17
+    )
+    
+    # 1. Page Break to Page 2 (TOC)
+    elements.append(PageBreak())
+    
+    toc_title_style = ParagraphStyle('TOCTitle', parent=title_style, fontSize=26, alignment=TA_CENTER, spaceAfter=40)
+    elements.append(Spacer(1, 0.4*inch))
+    elements.append(Paragraph("Table of Contents", toc_title_style))
+    elements.append(Spacer(1, 0.5*inch))
+    
+    toc_items = [
+        ("Executive Summary", 3),
+        ("Main Statistics", 4),
+        ("Telegram Sources", 4),
+        ("Selected Organization URLs", 5),
+        ("Statistics Overview Chart", 8),
+        ("Organizations Statistics", 10),
+        ("Top Domain Occurrences", 12),
+        ("Domain Occurrences Distribution", 13)
+    ]
+    
+    toc_table_data = []
+    for item, page_num in toc_items:
+        toc_table_data.append([
+            Paragraph(item, body_style),
+            Paragraph(str(page_num), ParagraphStyle('TOCPage', parent=body_style, alignment=TA_RIGHT))
+        ])
+    toc_table = Table(toc_table_data, colWidths=[5.3*inch, 1.2*inch])
+    toc_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+    ]))
+    elements.append(toc_table)
+    
+    # 2. Page Break to Page 3 (Executive Summary)
+    elements.append(PageBreak())
+    elements.append(Paragraph("Executive Summary", title_style))
+    intro_text = f"This {period_text.lower()} provides a comprehensive overview of MongoDB statistics for the period from <b>{start.strftime('%Y-%m-%d %H:%M UTC')}</b> to <b>{end.strftime('%Y-%m-%d %H:%M UTC')}</b>."
+    elements.append(Paragraph(intro_text, body_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
+    zip_count = int(stats.get('zip_import', 0))
+    decomp_count = int(stats.get('decompressed', 0))
+    cred_count = int(stats.get('credentials', 0))
+    hwid_count = int(stats.get('hwid', 0))
+    org_count = int(stats.get('total_organizations', 0))
+    domain_count = int(stats.get('total_domains', 0))
+    
+    cred_types = stats.get('credential_types', {})
+    telegram_count = int(cred_types.get('telegram', 0))
+    telegram_ulp_count = int(cred_types.get('telegram_ulp', 0))
+    
+    exec_table_data = [
+        ['Metric', 'Count'],
+        ['Import Zip Archives', f"{zip_count:,}"],
+        ['Decompressed Archives', f"{decomp_count:,}"],
+        ['Credentials Found', f"{cred_count:,}"],
+        ['HWID Identified', f"{hwid_count:,}"],
+        ['Telegram (source.type)', f"{telegram_count:,}"],
+        ['Telegram ULP (source.type)', f"{telegram_ulp_count:,}"],
+        ['Organizations Tracked', f"{org_count:,}"],
+        ['Total Domains', f"{domain_count:,}"]
+    ]
+    exec_table = Table(exec_table_data, colWidths=[4*inch, 2.5*inch])
+    exec_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), cosigma_cyan),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cosigma_light_gray]),
+        ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('LEFTPADDING', (0,0), (-1,-1), 12),
+        ('RIGHTPADDING', (0,0), (-1,-1), 12),
+    ]))
+    elements.append(exec_table)
+    elements.append(Spacer(1, 0.2*inch))
+    elements.append(Paragraph("This report contains detailed statistics, organizational insights, and domain occurrence analysis to support data-driven decision making.", body_style))
+    
+    # 3. Page Break to Page 4 (Main Statistics & Telegram Sources)
+    elements.append(PageBreak())
+    elements.append(Paragraph("Main Statistics", title_style))
+    main_stats_data = [
+        ['Metric', 'Count'],
+        ['Import Zip Archives', f"{zip_count:,}"],
+        ['Decompressed Archives', f"{decomp_count:,}"],
+        ['Credentials Found', f"{cred_count:,}"],
+        ['HWID Found', f"{hwid_count:,}"],
+        ['Telegram (source.type)', f"{telegram_count:,}"],
+        ['Telegram ULP (source.type)', f"{telegram_ulp_count:,}"]
+    ]
+    main_table = Table(main_stats_data, colWidths=[4*inch, 2.5*inch])
+    main_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), cosigma_cyan),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cosigma_light_gray]),
+        ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('LEFTPADDING', (0,0), (-1,-1), 12),
+        ('RIGHTPADDING', (0,0), (-1,-1), 12),
+    ]))
+    elements.append(main_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    elements.append(Paragraph("Telegram Sources", heading_style))
+    telegram_data = [
+        ['source.type', 'Count'],
+        ['telegram', f"{telegram_count:,}"],
+        ['telegram_ulp', f"{telegram_ulp_count:,}"]
+    ]
+    telegram_table = Table(telegram_data, colWidths=[4*inch, 2.5*inch])
+    telegram_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), cosigma_cyan),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cosigma_light_gray]),
+        ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('LEFTPADDING', (0,0), (-1,-1), 12),
+        ('RIGHTPADDING', (0,0), (-1,-1), 12),
+    ]))
+    elements.append(telegram_table)
+    
+    # 4. Selected Organization URLs Section (Pages 5, 6, 7)
+    targeted_orgs = ['chanel', 'chantiersatlantique', 'orano_group', 'unistra']
+    alerts_col = get_collection('alerts')
+    
+    for idx, org in enumerate(targeted_orgs):
+        org_query = {
+            "organization_id": org,
+            "updated_date": {"$gte": start, "$lte": end}
+        }
+        total_alerts_count = alerts_col.count_documents(org_query)
+        org_alerts = list(alerts_col.find(org_query).limit(25))
+        
+        if idx == 0:
+            elements.append(PageBreak())
+            elements.append(Paragraph("Selected Organization URLs", title_style))
+            
+        org_title_style = ParagraphStyle('OrgTitle', parent=heading_style, fontSize=14, spaceBefore=10, spaceAfter=8)
+        elements.append(Paragraph(org, org_title_style))
+        
+        table_header = ['URL', 'Login', 'Metadata', 'HWID']
+        rows = [table_header]
+        for alert in org_alerts:
+            url = alert.get('full_url') or alert.get('normalized_url') or 'N/A'
+            url_para = Paragraph(url[:65] + ('...' if len(url) > 65 else ''), ParagraphStyle('URLWrap', parent=styles['Normal'], fontSize=8, leading=10))
+            login = alert.get('login') or 'N/A'
+            login_para = Paragraph(login[:35] + ('...' if len(login) > 35 else ''), ParagraphStyle('LoginWrap', parent=styles['Normal'], fontSize=8, leading=10))
+            
+            metadata = 'no'
+            hwid = 'no'
+            detections = alert.get('detections', [])
+            if isinstance(detections, list) and len(detections) > 0:
+                metadata = 'yes'
+                for d in detections:
+                    host_id = d.get('host', {}).get('id') if isinstance(d.get('host'), dict) else None
+                    if not host_id:
+                        host_id = d.get('source', {}).get('host', {}).get('id') if isinstance(d.get('source'), dict) and isinstance(d.get('source').get('host'), dict) else None
+                    if host_id:
+                        hwid = host_id
+                        break
+            
+            hwid_para = Paragraph(hwid[:15] + ('...' if len(hwid) > 15 else ''), ParagraphStyle('HWIDWrap', parent=styles['Normal'], fontSize=8, leading=10))
+            rows.append([url_para, login_para, metadata, hwid_para])
+            
+        if len(rows) > 1:
+            org_table = Table(rows, colWidths=[3.2*inch, 1.8*inch, 0.7*inch, 1.3*inch])
+            org_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), cosigma_cyan),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 8),
+                ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+                ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cosigma_light_gray]),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('TOPPADDING', (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            elements.append(org_table)
+            
+            if total_alerts_count > 25:
+                elements.append(Paragraph(f"Showing first 25 of {total_alerts_count} rows for {org}.", ParagraphStyle('AlertCountFooter', parent=body_style, fontSize=8, spaceBefore=4)))
+        else:
+            elements.append(Paragraph("No alerts found for this organization in the selected period.", ParagraphStyle('NoAlerts', parent=body_style, fontSize=9, fontName='Helvetica-Oblique')))
+            
+        elements.append(Spacer(1, 0.15*inch))
+        
+        if org == 'chanel':
+            elements.append(PageBreak())
+        elif org == 'orano_group':
+            elements.append(PageBreak())
+            
+    # 5. Page Break to Page 8 (Interval Charts Page 1)
+    elements.append(PageBreak())
+    pdf_intervals = 3 if period == 'daily' else 7
+    pdf_delta = timedelta(hours=8) if period == 'daily' else timedelta(days=1)
+    labels, datasets = get_chart_data_optimized(start, end, pdf_intervals, pdf_delta, period)
+    
+    zip_values = datasets.get('zip_import', [0]*pdf_intervals)
+    decomp_values = datasets.get('decompressed', [0]*pdf_intervals)
+    cred_values = datasets.get('credentials', [0]*pdf_intervals)
+    hwid_values = datasets.get('hwid', [0]*pdf_intervals)
+    
+    def create_interval_chart(title, label_names, dataset, color):
+        drawing = Drawing(7*inch, 2.2*inch)
+        chart = VerticalBarChart()
+        chart.x = 0.6*inch
+        chart.y = 0.3*inch
+        chart.width = 5.8*inch
+        chart.height = 1.5*inch
+        chart.data = [[float(v) for v in dataset]]
+        chart.categoryAxis.categoryNames = label_names
+        chart.bars[0].fillColor = color
+        chart.valueAxis.valueMin = 0
+        chart.valueAxis.labels.fontSize = 8
+        chart.categoryAxis.labels.fontSize = 8
+        chart.barLabelFormat = '%d'
+        chart.barLabels.fontSize = 8
+        chart.barLabels.nudge = 4
+        drawing.add(chart)
+        return drawing
+        
+    elements.append(Paragraph("Import Zip Archives", heading_style))
+    elements.append(create_interval_chart("Import Zip Archives", labels, zip_values, cosigma_cyan))
+    elements.append(Spacer(1, 0.3*inch))
+    elements.append(Paragraph("Decompressed", heading_style))
+    elements.append(create_interval_chart("Decompressed", labels, decomp_values, cosigma_blue))
+    
+    # 6. Page Break to Page 9 (Interval Charts Page 2)
+    elements.append(PageBreak())
+    elements.append(Paragraph("Credentials", heading_style))
+    elements.append(create_interval_chart("Credentials", labels, cred_values, cosigma_cyan))
+    elements.append(Spacer(1, 0.3*inch))
+    elements.append(Paragraph("HWID", heading_style))
+    elements.append(create_interval_chart("HWID", labels, hwid_values, cosigma_purple))
+    
+    # 7. Page Break to Page 10 (Alerts by Organization ID)
+    elements.append(PageBreak())
+    elements.append(Paragraph("Alerts by Organization ID", title_style))
+    
+    alerts_by_org = stats.get('alerts_by_org', {})
+    sorted_alerts_by_org = sorted(alerts_by_org.items(), key=lambda x: x[1], reverse=True)
+    
+    orgs_table_data = [['Organization ID', 'Alerts Count']]
+    for org_id, count in sorted_alerts_by_org:
+        orgs_table_data.append([org_id, f"{count:,}"])
+        
+    if len(orgs_table_data) > 18:
+        page10_data = orgs_table_data[:18]
+        page11_data = [['Organization ID', 'Alerts Count']] + orgs_table_data[18:]
+        
+        table10 = Table(page10_data, colWidths=[4*inch, 2.5*inch])
+        table10.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), cosigma_purple),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cosigma_light_gray]),
+            ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
+        elements.append(table10)
+        
+        elements.append(PageBreak())
+        elements.append(Paragraph("Alerts by Organization ID (continued)", title_style))
+        table11 = Table(page11_data, colWidths=[4*inch, 2.5*inch])
+        table11.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), cosigma_purple),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cosigma_light_gray]),
+            ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
+        elements.append(table11)
+    else:
+        table10 = Table(orgs_table_data, colWidths=[4*inch, 2.5*inch])
+        table10.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), cosigma_purple),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cosigma_light_gray]),
+            ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
+        elements.append(table10)
+        
+    # 8. Page Break to Page 12 (Top Domain Occurrences)
+    elements.append(PageBreak())
+    elements.append(Paragraph("Top Domain Occurrences (from alerts)", title_style))
+    
+    top_domains_alerts = stats.get('top_domains_alerts', {})
+    sorted_domains_alerts = sorted(top_domains_alerts.items(), key=lambda x: x[1], reverse=True)[:15]
+    
+    domains_table_data = [['Domain', 'Count']]
+    for dom, count in sorted_domains_alerts:
+        domains_table_data.append([dom[:45] + ('...' if len(dom) > 45 else ''), f"{count:,}"])
+        
+    doms_table = Table(domains_table_data, colWidths=[4.5*inch, 2*inch])
+    doms_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), cosigma_orange),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, cosigma_light_gray]),
+        ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+    ]))
+    elements.append(doms_table)
+    
+    # 9. Page Break to Page 13 (Pie Chart)
+    elements.append(PageBreak())
+    elements.append(Paragraph("Top 10 Domain Occurrences Distribution", title_style))
+    elements.append(Spacer(1, 0.4*inch))
+    
+    top_10_domains = sorted_domains_alerts[:10]
+    if len(top_10_domains) > 0:
         try:
-            styles = getSampleStyleSheet()
-            PDF_STYLES = styles
-        except Exception as style_error:
-            logger.error(f"Error initializing PDF styles: {style_error}", exc_info=True)
-            return jsonify({'success': False, 'error': f'Failed to initialize PDF styles: {str(style_error)}'}), 500
-    
-    if styles is None:
-        return jsonify({'success': False, 'error': 'PDF styles not available'}), 500
-    
+            drawing = Drawing(7*inch, 4.8*inch)
+            pie = Pie()
+            pie.x = 1.2*inch
+            pie.y = 0.6*inch
+            pie.width = 3.8*inch
+            pie.height = 3.8*inch
+            pie.data = [float(count) for _, count in top_10_domains]
+            pie.labels = [domain[:20] + ('...' if len(domain) > 20 else '') for domain, _ in top_10_domains]
+            pie.slices.strokeWidth = 1.5
+            pie.slices.strokeColor = colors.white
+            
+            colors_list = [cosigma_cyan, cosigma_blue, colors.HexColor('#10b981'), cosigma_orange,
+                           cosigma_purple, colors.HexColor('#ec4899'), colors.HexColor('#f59e0b'),
+                           colors.HexColor('#3b82f6'), colors.HexColor('#8b5cf6'), colors.HexColor('#14b8a6')]
+                           
+            for i in range(len(pie.slices)):
+                if i < len(colors_list):
+                    pie.slices[i].fillColor = colors_list[i]
+            pie.sideLabels = 1
+            pie.sideLabelsOffset = 0.2
+            drawing.add(pie)
+            elements.append(drawing)
+        except Exception as chart_err:
+            logger.error(f"Error rendering PDF pie chart: {chart_err}", exc_info=True)
+            
+    # Build Document
+    doc.build(elements, onFirstPage=add_cover_page, onLaterPages=add_header_footer)
+    buffer.seek(0)
+    return buffer, start
+
+
+@app.route('/api/export-pdf')
+def export_pdf():
+    """Export comprehensive statistics as professional PDF report."""
     try:
         period = request.args.get('period', 'daily')
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
         
-        start, end = parse_date_range(period, start_date, end_date)
-        stats = get_stats_from_db(start, end)
+        buffer, start = _generate_pdf_report(period, start_date, end_date)
         
-        # Ensure stats is a dict and has required keys
-        if not isinstance(stats, dict):
-            stats = {}
-        
-        # Get dated info
-        timestamps = get_data_timestamps()
-        
-        # Cosigma Brand Colors - Modern Dark Theme
-        cosigma_cyan = colors.HexColor('#06b6d4')      # Primary - Cyan
-        cosigma_cyan_dark = colors.HexColor('#0891b2') # Darker Cyan
-        cosigma_blue = colors.HexColor('#0ea5e9')      # Secondary - Blue
-        cosigma_green = colors.HexColor('#10b981')     # Accent - Green
-        cosigma_amber = colors.HexColor('#f59e0b')     # Warm accent
-        cosigma_purple = colors.HexColor('#a78bfa')    # Purple
-        cosigma_orange = colors.HexColor('#fb923c')    # Orange
-        cosigma_gray = colors.HexColor('#94a3b8')      # Muted gray
-        cosigma_dark = colors.HexColor('#1e293b')      # Dark gray
-        cosigma_light_gray = colors.HexColor('#f1f5f9')  # Light gray
-        cosigma_bg = colors.HexColor('#0f172a')        # Dark background
-        
-        # Logo path và report reference
-        logo_path = os.path.join(os.path.dirname(__file__), 'static', 'logo.png')
-        logo_exists = os.path.exists(logo_path)
-        report_ref = f"MDB-{period.upper()}-{datetime.now(timezone.utc).strftime('%y%m%d')}"
-        
-        # Tính toán số trang (ước lượng)
-        estimated_pages = 1
-        if stats.get('domain_occurrences'):
-            estimated_pages = 2
-        
-        buffer = BytesIO()
-        
-        # Biến để lưu tổng số trang và page counter
-        total_pages_var = [0]
-        current_page_var = [0]
-        
-        # Tạo hàm callback cho cover page (không có header/footer)
-        def add_cover_page(canvas_obj, doc_obj):
-            """Add cover page with logo and branding - Clean professional layout."""
-            canvas_obj.saveState()
-            page_width, page_height = A4
+        if period == 'daily':
+            filename = f"Daily_report_{start.strftime('%Y-%m-%d')}.pdf"
+        elif period == 'weekly':
+            filename = f"Weekly_report_{start.strftime('%Y-%m-%d')}.pdf"
+        else:
+            filename = f"mongodb_report_{period}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
             
-            # Background gradient effect - Top section (chiếm 30% trang, vừa phải)
-            canvas_obj.setFillColor(cosigma_cyan)
-            header_height = page_height * 0.30
-            canvas_obj.rect(0, page_height - header_height, page_width, header_height, fill=1, stroke=0)
-            
-            # Logo ở giữa phần header (căn chỉnh tốt hơn)
-            logo_size = 1.4*inch
-            logo_x = (page_width - logo_size) / 2
-            logo_y = page_height - header_height + (header_height - logo_size) / 2 - 0.1*inch
-            
-            if logo_exists:
-                try:
-                    canvas_obj.drawImage(logo_path, logo_x, logo_y, 
-                                        width=logo_size, height=logo_size, preserveAspectRatio=True)
-                except Exception:
-                    pass
-            
-            # Company name - ngay dưới logo trong header, spacing hợp lý
-            canvas_obj.setFont('Times-Roman', 34)
-            canvas_obj.setFillColor(colors.white)
-            company_y = logo_y - 0.7*inch
-            canvas_obj.drawCentredString(page_width / 2, company_y, 'COSIGMA')
-            
-            # Main content area - căn giữa trang với spacing hợp lý
-            content_start_y = page_height - header_height - 1.8*inch
-            
-            # Report title - lớn và nổi bật
-            canvas_obj.setFont('Helvetica-Bold', 32)
-            canvas_obj.setFillColor(cosigma_dark)
-            title_y = content_start_y
-            canvas_obj.drawCentredString(page_width / 2, title_y, 'MongoDB Statistics Report')
-            
-            # Period - spacing hợp lý
-            canvas_obj.setFont('Helvetica', 20)
-            canvas_obj.setFillColor(cosigma_blue)
-            period_y = title_y - 0.7*inch
-            canvas_obj.drawCentredString(page_width / 2, period_y, period_text)
-            
-            # Date range - với divider line dài hơn và đẹp hơn
-            canvas_obj.setFont('Helvetica', 14)
-            canvas_obj.setFillColor(cosigma_gray)
-            date_y = period_y - 0.9*inch
-            
-            # Divider line - dài hơn và đẹp hơn
-            line_y = date_y - 0.25*inch
-            canvas_obj.setStrokeColor(cosigma_cyan)
-            canvas_obj.setLineWidth(2.5)
-            line_start = 1.0*inch
-            line_end = page_width - 1.0*inch
-            canvas_obj.line(line_start, line_y, line_end, line_y)
-            
-            canvas_obj.drawCentredString(page_width / 2, date_y - 0.45*inch, date_range)
-            
-            # Bottom section - Report reference và metadata (căn giữa, spacing hợp lý)
-            bottom_section_y = 3.2*inch
-            canvas_obj.setFont('Helvetica-Bold', 12)
-            canvas_obj.setFillColor(cosigma_dark)
-            canvas_obj.drawCentredString(page_width / 2, bottom_section_y + 0.8*inch, f'Report Reference: {report_ref}')
-            
-            canvas_obj.setFont('Helvetica', 11)
-            canvas_obj.setFillColor(cosigma_gray)
-            canvas_obj.drawCentredString(page_width / 2, bottom_section_y, 
-                                       f'Generated: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}')
-            
-            # Company info ở footer - với divider và dễ đọc hơn
-            footer_y = 1.1*inch
-            canvas_obj.setStrokeColor(cosigma_cyan)
-            canvas_obj.setLineWidth(1.2)
-            canvas_obj.line(1.0*inch, footer_y + 0.6*inch, page_width - 1.0*inch, footer_y + 0.6*inch)
-            
-            canvas_obj.setFont('Helvetica', 10)
-            canvas_obj.setFillColor(cosigma_dark)  # Đậm hơn để dễ đọc
-            canvas_obj.drawCentredString(page_width / 2, footer_y, 'SIRET: 952 164 911 00010')
-            canvas_obj.drawCentredString(page_width / 2, footer_y - 0.3*inch, '3 terrasse Valmy, 92800 PUTEAUX, France')
-            
-            canvas_obj.restoreState()
-            current_page_var[0] += 1
-        
-        # Tạo hàm callback cho header và footer (cho các trang sau cover)
-        def add_header_footer(canvas_obj, doc_obj):
-            """Add header and footer to every page (except cover)."""
-            canvas_obj.saveState()
-            
-            page_width, page_height = A4
-            current_page_var[0] += 1
-            
-            # Skip header/footer on cover page
-            if current_page_var[0] == 1:
-                canvas_obj.restoreState()
-                return
-            
-            # Header - Logo Cosigma ở trái
-            logo_x = 0.5*inch
-            logo_y = page_height - 0.5*inch - 0.6*inch
-            logo_size = 0.7*inch
-            
-            if logo_exists:
-                try:
-                    canvas_obj.drawImage(logo_path, logo_x, logo_y, 
-                                        width=logo_size, height=logo_size, preserveAspectRatio=True)
-                except Exception:
-                    pass
-            
-            # Text "COSIGMA" bên cạnh logo
-            text_x = logo_x + logo_size + 0.15*inch
-            logo_center_y = logo_y + logo_size / 2
-            text_y = logo_center_y - 0.15*inch
-            
-            canvas_obj.setFont('Times-Roman', 22)
-            canvas_obj.setFillColor(colors.black)
-            canvas_obj.drawString(text_x, text_y, 'COSIGMA')
-            
-            # Footer với page number và company info - căn chỉnh tốt hơn
-            footer_y = 0.4*inch
-            canvas_obj.setFont('Helvetica', 8)
-            canvas_obj.setFillColor(cosigma_gray)
-            
-            # Page number - góc phải
-            page_num = current_page_var[0] - 1  # Subtract 1 because cover is page 1
-            canvas_obj.drawRightString(page_width - 0.5*inch, footer_y + 0.2*inch, f'Page {page_num}')
-            
-            # Company info - căn giữa (không overlap với page number)
-            canvas_obj.drawCentredString(page_width / 2, footer_y + 0.2*inch, 'SIRET: 952 164 911 00010')
-            canvas_obj.drawCentredString(page_width / 2, footer_y, '3 terrasse Valmy, 92800 PUTEAUX, France')
-            
-            canvas_obj.restoreState()
-        
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=A4,
-            rightMargin=0.6*inch,
-            leftMargin=0.6*inch,
-            topMargin=1.2*inch,  # Tăng top margin để tránh overlap với header
-            bottomMargin=1.0*inch  # Bottom margin cho footer
-        )
-        elements = []
-        
-        # Title Style với Cosigma branding (header đã được vẽ trên mỗi trang)
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=28,
-            textColor=cosigma_cyan,
-            spaceAfter=12,
-            alignment=TA_LEFT,
-            fontName='Helvetica-Bold',
-            leading=32,
-            letterSpacing=0.5
-        )
-        
-        # Subtitle Style
-        subtitle_style = ParagraphStyle(
-            'Subtitle',
-            parent=styles['Normal'],
-            fontSize=13,
-            textColor=cosigma_blue,
-            spaceAfter=20,
-            alignment=TA_LEFT,
-            fontName='Helvetica',
-            leading=16
-        )
-        
-        # Section Heading Style
-        heading_style = ParagraphStyle(
-            'CustomHeading',
-            parent=styles['Heading2'],
-            fontSize=16,
-            textColor=cosigma_cyan,
-            spaceAfter=14,
-            spaceBefore=20,
-            fontName='Helvetica-Bold',
-            leading=20,
-            borderWidth=0,
-            borderPadding=0,
-            leftIndent=0
-        )
-        
-        # Metadata Style - Đảm bảo text đủ tương phản với background
-        metadata_style = ParagraphStyle(
-            'Metadata',
-            parent=styles['Normal'],
-            fontSize=9,
-            textColor=colors.HexColor('#1e293b'),  # Màu đen đậm để đọc rõ trên nền xanh nhạt
-            spaceAfter=6,
-            alignment=TA_LEFT,
-            fontName='Helvetica'
-        )
-        
-        # Report Title và Metadata
-        period_text = "Daily Report (24 hours)" if period == 'daily' else "Weekly Report (7 days)"
-        date_range = f"{start.strftime('%Y-%m-%d %H:%M')} to {end.strftime('%Y-%m-%d %H:%M')}"
-        
-        # COVER PAGE - Cover page sẽ được render tự động bởi add_cover_page callback
-        # Cover page là trang đầu tiên, không có elements nào được thêm vào
-        
-        # TABLE OF CONTENTS - Trang riêng với spacing hợp lý, không bị che bởi header
-        # PageBreak để đảm bảo TOC ở trang riêng sau cover page
-        elements.append(PageBreak())
-        
-        toc_style = ParagraphStyle(
-            'TOC',
-            parent=styles['Normal'],
-            fontSize=11,
-            textColor=cosigma_dark,
-            spaceAfter=12,
-            leftIndent=0.2*inch,
-            rightIndent=0.2*inch,
-            fontName='Helvetica',
-            leading=17
-        )
-        
-        toc_title_style = ParagraphStyle(
-            'TOCTitle',
-            parent=styles['Heading1'],
-            fontSize=26,
-            textColor=cosigma_cyan,
-            spaceAfter=40,
-            spaceBefore=20,  # Giảm spaceBefore vì đã có PageBreak
-            alignment=TA_CENTER,
-            fontName='Helvetica-Bold',
-            leading=30
-        )
-        
-        # TOC items với formatting tốt hơn
-        toc_items = [
-            ("Executive Summary", 3),
-            ("Main Statistics", 3),
-            ("Statistics Overview Chart", 3),
-            ("Organizations Statistics", 4),
-        ]
-        
-        if stats.get('domain_occurrences'):
-            toc_items.extend([
-                ("Top Domain Occurrences", 4),
-                ("Domain Occurrences Distribution", 5)
-            ])
-        
-        # TOC content - KeepTogether để giữ nguyên trang với spacing hợp lý
-        toc_content = []
-        # Spacing hợp lý từ top của trang (sau PageBreak và top margin 1.2 inch)
-        # Giảm spacing vì top margin đã đủ lớn
-        toc_content.append(Spacer(1, 0.4*inch))
-        toc_content.append(Paragraph("Table of Contents", toc_title_style))
-        toc_content.append(Spacer(1, 0.5*inch))
-        
-        # TOC table để căn chỉnh tốt hơn
-        toc_table_data = []
-        for item, page_num in toc_items:
-            toc_table_data.append([
-                Paragraph(item, toc_style),
-                Paragraph(str(page_num), ParagraphStyle('TOCPage', parent=toc_style, alignment=TA_RIGHT, fontSize=11))
-            ])
-        
-        toc_table = Table(toc_table_data, colWidths=[5.3*inch, 1.2*inch])
-        toc_table.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
-            ('ALIGN', (1, 0), (-1, 0), 'RIGHT'),
-            ('LEFTPADDING', (0, 0), (-1, -1), 12),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-            ('TOPPADDING', (0, 0), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-        ]))
-        toc_content.append(toc_table)
-        
-        # KeepTogether để TOC không bị cắt giữa trang
-        elements.append(KeepTogether(toc_content))
-        elements.append(PageBreak())
-        
-        # EXECUTIVE SUMMARY - Layout tốt hơn với KeepTogether
-        exec_summary_style = ParagraphStyle(
-            'ExecSummary',
-            parent=styles['Normal'],
-            fontSize=11,
-            textColor=cosigma_dark,
-            spaceAfter=14,
-            alignment=TA_LEFT,
-            fontName='Helvetica',
-            leading=17,
-            leftIndent=0,
-            rightIndent=0
-        )
-        
-        exec_heading_style = ParagraphStyle(
-            'ExecHeading',
-            parent=heading_style,
-            fontSize=20,
-            spaceAfter=22,
-            spaceBefore=10
-        )
-        
-        zip_count = int(stats.get('zip_import', 0))
-        decomp_count = int(stats.get('decompressed', 0))
-        cred_count = int(stats.get('credentials', 0))
-        hwid_count = int(stats.get('hwid', 0))
-        org_count = int(stats.get('total_organizations', 0))
-        domain_count = int(stats.get('total_domains', 0))
-        
-        # Executive Summary section - KeepTogether để không bị cắt
-        exec_summary_content = []
-        exec_summary_content.append(Paragraph("Executive Summary", exec_heading_style))
-        
-        # Summary với formatting tốt hơn
-        summary_intro = Paragraph(
-            f"This {period_text.lower()} provides a comprehensive overview of MongoDB statistics for the period from <b>{start.strftime('%Y-%m-%d %H:%M UTC')}</b> to <b>{end.strftime('%Y-%m-%d %H:%M UTC')}</b>.",
-            exec_summary_style
-        )
-        exec_summary_content.append(summary_intro)
-        exec_summary_content.append(Spacer(1, 0.25*inch))
-        
-        # Key highlights trong box
-        highlights_data = [
-            ['Metric', 'Count'],
-            ['Zip Archives Imported', f"{zip_count:,}"],
-            ['Decompressed Archives', f"{decomp_count:,}"],
-            ['Credentials Found', f"{cred_count:,}"],
-            ['HWID Identified', f"{hwid_count:,}"],
-            ['Organizations Tracked', f"{org_count:,}"],
-            ['Total Domains', f"{domain_count:,}"]
-        ]
-        
-        highlights_table = Table(highlights_data, colWidths=[4*inch, 2.5*inch])
-        highlights_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), cosigma_cyan),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 11),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('TOPPADDING', (0, 0), (-1, 0), 12),
-            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
-            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
-            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('TEXTCOLOR', (0, 1), (-1, -1), cosigma_dark),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#cbd5e1')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
-            ('TOPPADDING', (0, 1), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 10),
-            ('LEFTPADDING', (0, 0), (-1, -1), 12),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ]))
-        exec_summary_content.append(highlights_table)
-        exec_summary_content.append(Spacer(1, 0.3*inch))
-        
-        # Conclusion paragraph
-        conclusion = Paragraph(
-            "This report contains detailed statistics, organizational insights, and domain occurrence analysis to support data-driven decision making.",
-            exec_summary_style
-        )
-        exec_summary_content.append(conclusion)
-        
-        # KeepTogether để Executive Summary không bị cắt
-        elements.append(KeepTogether(exec_summary_content))
-        elements.append(Spacer(1, 0.4*inch))
-        
-        # Main Statistics Table với styling đẹp hơn và căn chỉnh tốt hơn
-        # KeepTogether để title và table không bị tách
-        main_stats_content = []
-        main_stats_content.append(Paragraph("Main Statistics", heading_style))
-        
-        table_data = [
-            ['Metric', 'Count'],
-            ['Zip Archives Imported', f"{zip_count:,}"],
-            ['Decompressed Archives', f"{decomp_count:,}"],
-            ['Credentials Found', f"{cred_count:,}"],
-            ['HWID Found', f"{hwid_count:,}"]
-        ]
-        
-        table = Table(table_data, colWidths=[4.5*inch, 2.5*inch])
-        table.setStyle(TableStyle([
-            # Header row - Modern cyan gradient effect
-            ('BACKGROUND', (0, 0), (-1, 0), cosigma_cyan),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 14),
-            ('TOPPADDING', (0, 0), (-1, 0), 14),
-            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
-            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-            # Data rows - Alternating light backgrounds
-            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
-            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('TEXTCOLOR', (0, 1), (-1, -1), cosigma_dark),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#cbd5e1')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
-            ('TOPPADDING', (0, 1), (-1, -1), 11),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 11),
-            ('LEFTPADDING', (0, 0), (-1, -1), 14),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 14),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ]))
-        main_stats_content.append(table)
-        elements.append(KeepTogether(main_stats_content))
-        elements.append(Spacer(1, 0.4*inch))
-        
-        # Add Bar Chart for Main Statistics - Căn chỉnh tốt hơn với KeepTogether
-        try:
-            # Only create chart if we have at least one non-zero value
-            if zip_count > 0 or decomp_count > 0 or cred_count > 0 or hwid_count > 0:
-                chart_content = []
-                chart_content.append(Paragraph("Statistics Overview Chart", heading_style))
-                chart_content.append(Spacer(1, 0.2*inch))
-                
-                drawing = Drawing(7*inch, 3.8*inch)
-                chart = VerticalBarChart()
-                chart.x = 0.6*inch
-                chart.y = 0.4*inch
-                chart.width = 5.8*inch
-                chart.height = 3.2*inch
-                
-                # Normalize data for better visualization
-                max_val = max(zip_count, decomp_count, cred_count, hwid_count)
-                if max_val > 0:
-                    chart.data = [[float(zip_count), float(decomp_count), float(cred_count), float(hwid_count)]]
-                else:
-                    chart.data = [[0.0, 0.0, 0.0, 0.0]]
-                
-                chart.categoryAxis.categoryNames = ['Zip\nArchives', 'Decompressed', 'Credentials', 'HWID']
-                chart.bars[0].fillColor = cosigma_cyan
-                chart.valueAxis.valueMin = 0
-                chart.valueAxis.labels.fontName = 'Helvetica'
-                chart.valueAxis.labels.fontSize = 9
-                chart.categoryAxis.labels.fontName = 'Helvetica'
-                chart.categoryAxis.labels.fontSize = 9
-                chart.categoryAxis.labels.angle = 0
-                chart.barLabelFormat = '%d'
-                chart.barLabels.nudge = 5
-                drawing.add(chart)
-                chart_content.append(drawing)
-                
-                # KeepTogether để chart không bị cắt
-                elements.append(KeepTogether(chart_content))
-                elements.append(Spacer(1, 0.4*inch))
-        except Exception as chart_error:
-            logger.error(f"Could not create statistics chart: {chart_error}", exc_info=True)
-            # Continue without chart
-        
-        # Organizations Statistics với purple header - Căn chỉnh tốt hơn với KeepTogether
-        org_stats_content = []
-        org_stats_content.append(Paragraph("Organizations Statistics", heading_style))
-        
-        org_table_data = [
-            ['Metric', 'Count'],
-            ['Total Organizations', f"{org_count:,}"],
-            ['Organization Indexes', f"{int(stats.get('organizations_indexes', 0)):,}"],
-            ['Total Domains', f"{domain_count:,}"],
-            ['Unique Domains', f"{int(stats.get('unique_domains', 0)):,}"],
-            ['Organizations with Domains', f"{int(stats.get('organizations_with_domains', 0)):,}"]
-        ]
-        
-        org_table = Table(org_table_data, colWidths=[4.5*inch, 2.5*inch])
-        org_table.setStyle(TableStyle([
-            # Header row với purple
-            ('BACKGROUND', (0, 0), (-1, 0), cosigma_purple),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 14),
-            ('TOPPADDING', (0, 0), (-1, 0), 14),
-            ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
-            ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-            # Data rows
-            ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
-            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
-            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('TEXTCOLOR', (0, 1), (-1, -1), cosigma_dark),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e5e7eb')),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, cosigma_light_gray]),
-            ('TOPPADDING', (0, 1), (-1, -1), 11),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 11),
-            ('LEFTPADDING', (0, 0), (-1, -1), 14),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 14),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ]))
-        org_stats_content.append(org_table)
-        
-        # KeepTogether để title và table không bị tách
-        elements.append(KeepTogether(org_stats_content))
-        elements.append(Spacer(1, 0.4*inch))
-        
-        # Top Domain Occurrences với orange header - đảm bảo title và table cùng trang
-        if stats.get('domain_occurrences'):
-            domain_content = []
-            domain_content.append(Paragraph("Top Domain Occurrences", heading_style))
-            
-            domain_data = [['Domain', 'Count']]
-            sorted_domains = sorted(
-                stats['domain_occurrences'].items(),
-                key=lambda x: x[1],
-                reverse=True
-            )[:15]  # Top 15 for PDF
-            for domain, count in sorted_domains:
-                domain_data.append([domain[:45] + ('...' if len(domain) > 45 else ''), f"{int(count):,}"])
-            
-            domain_table = Table(domain_data, colWidths=[4.5*inch, 2.5*inch])
-            domain_table.setStyle(TableStyle([
-                # Header row với orange
-                ('BACKGROUND', (0, 0), (-1, 0), cosigma_orange),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 14),
-                ('TOPPADDING', (0, 0), (-1, 0), 14),
-                ('ALIGN', (0, 0), (-1, 0), 'LEFT'),
-                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
-                # Data rows
-                ('ALIGN', (0, 1), (-1, -1), 'LEFT'),
-                ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 9),
-                ('TEXTCOLOR', (0, 1), (-1, -1), cosigma_dark),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e5e7eb')),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, cosigma_light_gray]),
-                ('TOPPADDING', (0, 1), (-1, -1), 10),
-                ('BOTTOMPADDING', (0, 1), (-1, -1), 10),
-                ('LEFTPADDING', (0, 0), (-1, -1), 12),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ]))
-            domain_content.append(domain_table)
-            
-            # Giữ title và table cùng trang bằng KeepTogether
-            elements.append(KeepTogether(domain_content))
-            elements.append(Spacer(1, 0.4*inch))
-            
-            # Add Pie Chart for Top 10 Domains - Căn chỉnh tốt hơn với KeepTogether
-            try:
-                top_10_domains = sorted_domains[:10]
-                if top_10_domains and len(top_10_domains) > 0:
-                    # Only create pie chart if we have data and counts > 0
-                    total_count = sum(count for _, count in top_10_domains)
-                    if total_count > 0:
-                        pie_chart_content = []
-                        pie_chart_content.append(Paragraph("Top 10 Domain Occurrences Distribution", heading_style))
-                        pie_chart_content.append(Spacer(1, 0.2*inch))
-                        
-                        drawing = Drawing(7*inch, 4.8*inch)
-                        pie = Pie()
-                        pie.x = 1.2*inch
-                        pie.y = 0.6*inch
-                        pie.width = 3.8*inch
-                        pie.height = 3.8*inch
-                        pie.data = [float(count) for _, count in top_10_domains]  # Ensure float
-                        pie.labels = [domain[:20] + ('...' if len(domain) > 20 else '') for domain, _ in top_10_domains]
-                        pie.slices.strokeWidth = 1.5
-                        pie.slices.strokeColor = colors.white
-                        # Use Cosigma colors
-                        colors_list = [cosigma_cyan, cosigma_blue, cosigma_green, cosigma_amber, 
-                                     cosigma_purple, cosigma_orange, cosigma_cyan_dark, 
-                                     colors.HexColor('#3b82f6'), colors.HexColor('#8b5cf6'), 
-                                     colors.HexColor('#ec4899')]
-                        for i in range(len(pie.slices)):
-                            if i < len(colors_list):
-                                pie.slices[i].fillColor = colors_list[i]
-                        pie.sideLabels = 1
-                        pie.sideLabelsOffset = 0.2
-                        drawing.add(pie)
-                        pie_chart_content.append(drawing)
-                        
-                        # KeepTogether để chart không bị cắt
-                        elements.append(KeepTogether(pie_chart_content))
-                        elements.append(Spacer(1, 0.4*inch))
-            except Exception as pie_error:
-                logger.error(f"Could not create pie chart: {pie_error}", exc_info=True)
-                # Continue without pie chart
-        
-        # Build PDF với cover page và header/footer
-        # onFirstPage sẽ render cover page (trang 1)
-        # Các elements sau PageBreak sẽ ở trang 2 (TOC)
-        doc.build(elements, onFirstPage=add_cover_page, onLaterPages=add_header_footer)
-        buffer.seek(0)
-        
-        filename = f"mongodb_report_{period}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
-        
         return send_file(
             buffer,
             mimetype='application/pdf',
@@ -1536,10 +1464,8 @@ def export_pdf():
         )
     except Exception as e:
         logger.error(f"Error exporting PDF: {e}", exc_info=True)
-        error_msg = str(e)
-        if "styles" in error_msg.lower():
-            error_msg = f"Styles initialization error: {error_msg}"
-        return jsonify({'success': False, 'error': error_msg}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 
 
 @app.route('/api/export-pdf-search', methods=['POST'])
@@ -1578,6 +1504,29 @@ def export_pdf_search():
         search_type = request_data.get('type', 'report')
         data = request_data.get('data', {})
         title = request_data.get('title', 'Search Results Report')
+        
+        if search_type == 'report':
+            # Use unified comprehensive PDF report layout for type == 'report'
+            logger.info("Redirecting export_pdf_search report type to _generate_pdf_report")
+            period = data.get('period', 'daily')
+            start_date = data.get('start')
+            end_date = data.get('end')
+            
+            buffer, start = _generate_pdf_report(period, start_date, end_date)
+            
+            if period == 'daily':
+                filename = f"Daily_report_{start.strftime('%Y-%m-%d')}.pdf"
+            elif period == 'weekly':
+                filename = f"Weekly_report_{start.strftime('%Y-%m-%d')}.pdf"
+            else:
+                filename = f"mongodb_report_{period}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
+                
+            return send_file(
+                buffer,
+                mimetype='application/pdf',
+                as_attachment=True,
+                download_name=filename
+            )
         
         logger.info(f"PDF export: type={search_type}, title={title}, data_keys={list(data.keys()) if isinstance(data, dict) else 'not_dict'}")
         

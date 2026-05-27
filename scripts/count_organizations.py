@@ -214,7 +214,7 @@ if __name__ == "__main__":
     print(f"Organizations with domains: {stats['organizations_with_domains']}")
     print("\nNOTE:")
     print("- Index Organization = _id field of organization document")
-    print("- Example: Organization 'cosigma' has index organization = 'cosigma'")
+    print("- Example: Organization 'breachunt' has index organization = 'breachunt'")
     print("- Domain occurrences show how many times each domain appears")
     print("- Time Ingest = When data was cached (cached_at field)")
     print("- Data Dated = Date range of source data (created_at/updated_at)")

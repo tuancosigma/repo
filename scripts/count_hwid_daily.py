@@ -33,13 +33,18 @@ def main():
         # 2. Extract id from various paths (host.id, source.host.id, etc.)
         # 3. Count unique IDs (if duplicate, don't count again)
         pipeline = [
-            # Step 1: Match date range and ensure detections exists and is array
+            # Step 1: Match date range in updated_date and detections, and ensure detections exists and is not empty
             {"$match": {
-                "created_date": {"$gte": one_day_ago},
+                "updated_date": {"$gte": one_day_ago},
+                "detections.detection_date": {"$gte": one_day_ago},
                 "detections": {"$exists": True, "$ne": None, "$type": "array", "$not": {"$size": 0}}
             }},
             # Step 2: Unwind detections array to process each detection element
             {"$unwind": "$detections"},
+            # Step 2b: Filter the unwound detections within target range
+            {"$match": {
+                "detections.detection_date": {"$gte": one_day_ago}
+            }},
             # Step 3: Extract id from various possible paths
             # Priority: detections.host.id > detections.source.host.id > other paths
             {"$project": {
@@ -72,10 +77,14 @@ def main():
         # Get list of unique HWIDs
         hwid_list_pipeline = [
             {"$match": {
-                "created_date": {"$gte": one_day_ago},
+                "updated_date": {"$gte": one_day_ago},
+                "detections.detection_date": {"$gte": one_day_ago},
                 "detections": {"$exists": True, "$ne": None, "$type": "array", "$not": {"$size": 0}}
             }},
             {"$unwind": "$detections"},
+            {"$match": {
+                "detections.detection_date": {"$gte": one_day_ago}
+            }},
             {"$project": {
                 "hwid": {
                     "$ifNull": [

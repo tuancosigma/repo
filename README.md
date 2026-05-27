@@ -177,7 +177,7 @@ python scripts/count_hwid_weekly.py
 
 ## 📝 License
 
-Copyright © Cosigma
+Copyright © Breachunt
 
 ## 🔗 Links
 
