@@ -1448,7 +1448,7 @@ def _generate_pdf_report(period, start_date, end_date):
     # Build Document
     doc.build(elements, onFirstPage=add_cover_page, onLaterPages=add_header_footer)
     buffer.seek(0)
-    return buffer, start
+    return buffer, end
 
 
 @app.route('/api/export-pdf')
@@ -1459,12 +1459,12 @@ def export_pdf():
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
         
-        buffer, start = _generate_pdf_report(period, start_date, end_date)
+        buffer, end = _generate_pdf_report(period, start_date, end_date)
         
         if period == 'daily':
-            filename = f"Daily_report_{start.strftime('%Y-%m-%d')}.pdf"
+            filename = f"Daily_report_{end.strftime('%Y-%m-%d')}.pdf"
         elif period == 'weekly':
-            filename = f"Weekly_report_{start.strftime('%Y-%m-%d')}.pdf"
+            filename = f"Weekly_report_{end.strftime('%Y-%m-%d')}.pdf"
         else:
             filename = f"mongodb_report_{period}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
             
@@ -1524,12 +1524,12 @@ def export_pdf_search():
             start_date = data.get('start')
             end_date = data.get('end')
             
-            buffer, start = _generate_pdf_report(period, start_date, end_date)
+            buffer, end = _generate_pdf_report(period, start_date, end_date)
             
             if period == 'daily':
-                filename = f"Daily_report_{start.strftime('%Y-%m-%d')}.pdf"
+                filename = f"Daily_report_{end.strftime('%Y-%m-%d')}.pdf"
             elif period == 'weekly':
-                filename = f"Weekly_report_{start.strftime('%Y-%m-%d')}.pdf"
+                filename = f"Weekly_report_{end.strftime('%Y-%m-%d')}.pdf"
             else:
                 filename = f"mongodb_report_{period}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.pdf"
                 
