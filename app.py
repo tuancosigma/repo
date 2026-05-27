@@ -1237,14 +1237,26 @@ def _generate_pdf_report(period, start_date, end_date):
             hwid = 'no'
             detections = alert.get('detections', [])
             if isinstance(detections, list) and len(detections) > 0:
-                metadata = 'yes'
+                valid_detections = []
                 for d in detections:
-                    host_id = d.get('host', {}).get('id') if isinstance(d.get('host'), dict) else None
-                    if not host_id:
-                        host_id = d.get('source', {}).get('host', {}).get('id') if isinstance(d.get('source'), dict) and isinstance(d.get('source').get('host'), dict) else None
-                    if host_id:
-                        hwid = host_id
-                        break
+                    d_date = d.get('detection_date')
+                    if d_date:
+                        try:
+                            normalized_d_date = normalize_to_utc(d_date)
+                            if start <= normalized_d_date <= end:
+                                valid_detections.append(d)
+                        except Exception:
+                            pass
+                
+                if len(valid_detections) > 0:
+                    metadata = 'yes'
+                    for d in valid_detections:
+                        host_id = d.get('host', {}).get('id') if isinstance(d.get('host'), dict) else None
+                        if not host_id:
+                            host_id = d.get('source', {}).get('host', {}).get('id') if isinstance(d.get('source'), dict) and isinstance(d.get('source').get('host'), dict) else None
+                        if host_id:
+                            hwid = host_id
+                            break
             
             hwid_para = Paragraph(hwid[:15] + ('...' if len(hwid) > 15 else ''), ParagraphStyle('HWIDWrap', parent=styles['Normal'], fontSize=8, leading=10))
             rows.append([url_para, login_para, metadata, hwid_para])
@@ -1571,7 +1583,7 @@ def export_pdf_search():
             
             canvas_obj.setFont('Times-Roman', 22)
             canvas_obj.setFillColor(colors.black)
-            canvas_obj.drawString(text_x, text_y, 'COSIGMA')
+            canvas_obj.drawString(text_x, text_y, 'BREACHUNT')
             
             # Footer
             footer_y = 0.4*inch
