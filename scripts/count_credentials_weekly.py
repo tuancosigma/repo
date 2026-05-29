@@ -33,6 +33,7 @@ def main():
         import json
         
         count = None
+        breakdown = {}
         cache_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static', 'persistent_cache.json')
         
         if os.path.exists(cache_file):
@@ -47,6 +48,7 @@ def main():
                                 val = data.get('stats', {}).get('credentials')
                                 if val is not None and val > 0:
                                     count = val
+                                    breakdown = data.get('stats', {}).get('credential_types', {})
                                     print("Retrieving count from persistent cache (instant)...")
                                     break
             except Exception:
@@ -54,15 +56,34 @@ def main():
 
         if count is None:
             print("Querying MongoDB (forcing harvest_date_1 index hint)...")
-            query = {
-                "harvest_date": {"$gte": one_week_ago}
-            }
+            pipeline = [
+                {"$match": {
+                    "harvest_date": {"$gte": one_week_ago}
+                }},
+                {"$group": {
+                    "_id": "$source.type",
+                    "count": {"$sum": 1}
+                }}
+            ]
             # Explicitly force index usage to avoid slow collection scans on sharded 11-billion doc collection
-            count = collection.count_documents(query, hint="harvest_date_1")
+            results = list(collection.aggregate(pipeline, hint="harvest_date_1", allowDiskUse=True))
+            
+            breakdown = {}
+            count = 0
+            for item in results:
+                type_name = item.get('_id') or 'unknown'
+                type_count = item.get('count', 0)
+                breakdown[type_name] = type_count
+                count += type_count
 
         print("-" * 40)
         print(f"Credentials found (7 days) : {count:,}")
         print("-" * 40)
+        if breakdown:
+            print("Breakdown by source.type:")
+            for type_name, type_count in sorted(breakdown.items(), key=lambda x: x[1], reverse=True):
+                print(f"  - {type_name}: {type_count:,}")
+            print("-" * 40)
 
     except Exception as e:
         print(f"Error : {e}")
