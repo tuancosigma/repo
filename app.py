@@ -638,7 +638,7 @@ def get_chart_data_optimized(start, end, intervals, delta, period='weekly'):
             except Exception:
                 results['decomp'] = 0
             try:
-                r = list(credentials_col.aggregate(creds_p, allowDiskUse=True))
+                r = list(credentials_col.aggregate(creds_p, allowDiskUse=True, hint="harvest_date_1"))
                 results['creds'] = r[0]['total'] if r else 0
             except Exception as e:
                 if 'timed out' in str(e).lower() or 'timeout' in str(e).lower():
