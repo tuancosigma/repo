@@ -992,6 +992,10 @@ def _generate_pdf_report(period, start_date, end_date):
     cached_result = get_cached(cache_key, CACHE_TTL_STATS)
     if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
         stats = cached_result['stats']
+        # If cache is partial (credentials or hwid is 0), bypass it to query full results
+        if stats.get('credentials', 0) == 0 or stats.get('hwid', 0) == 0:
+            logger.info("Cached stats are partial (credentials or hwid is 0). Bypassing cache for PDF generation.")
+            stats = get_stats_from_db(start, end)
     else:
         stats = get_stats_from_db(start, end)
         
