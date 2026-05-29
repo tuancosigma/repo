@@ -35,6 +35,7 @@ from db_helpers import get_mongo_client, get_collection, execute_stats_queries, 
 import time
 import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2762,7 +2763,95 @@ def debug_archives():
         return jsonify({'success': False, 'error': str(e), 'traceback': traceback.format_exc()}), 500
 
 
+def start_background_warmup():
+    """Start a background daemon thread to warm up and compute daily and weekly credentials stats."""
+    def warmup_task():
+        # Delay slightly to allow the server to start printing routes cleanly
+        time.sleep(2)
+        
+        while True:
+            logger.info("Background cache warmup: starting credentials aggregation queries...")
+            
+            # 1. Warm up Daily Credentials Stats
+            try:
+                start_daily, end_daily = parse_date_range('daily', None, None)
+                start_daily = normalize_to_utc(start_daily)
+                end_daily = normalize_to_utc(end_daily)
+                
+                logger.info("Background cache warmup: executing daily credentials query...")
+                stats_daily = get_stats_from_db(start_daily, end_daily, metrics=['credentials'])
+                
+                # Fetch cache key and update or merge
+                cache_key = get_cache_key('stats', period='daily', start_date=None, end_date=None)
+                cached_result = get_cached(cache_key, CACHE_TTL_STATS)
+                if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
+                    cached_result['stats'].update(stats_daily)
+                    set_cache(cache_key, cached_result)
+                else:
+                    default_stats = {
+                        'zip_import': 0, 'decompressed': 0, 'credentials': 0, 'hwid': 0,
+                        'total_organizations': 0, 'organizations_indexes': 0, 'total_domains': 0,
+                        'unique_domains': 0, 'organizations_with_domains': 0, 'domain_occurrences': {},
+                        'credential_types': {}, 'alerts_by_org': {}, 'top_domains_alerts': {}, 'dated': {}
+                    }
+                    default_stats.update(stats_daily)
+                    result = {
+                        'success': True,
+                        'stats': default_stats,
+                        'period': 'daily',
+                        'start_date': start_daily.isoformat(),
+                        'end_date': end_daily.isoformat()
+                    }
+                    set_cache(cache_key, result)
+                logger.info("Background cache warmup: daily credentials stats successfully cached.")
+            except Exception as e:
+                logger.error(f"Error in background daily cache warmup: {e}", exc_info=True)
+                
+            # 2. Warm up Weekly Credentials Stats
+            try:
+                start_weekly, end_weekly = parse_date_range('weekly', None, None)
+                start_weekly = normalize_to_utc(start_weekly)
+                end_weekly = normalize_to_utc(end_weekly)
+                
+                logger.info("Background cache warmup: executing weekly credentials query...")
+                stats_weekly = get_stats_from_db(start_weekly, end_weekly, metrics=['credentials'])
+                
+                # Fetch cache key and update or merge
+                cache_key = get_cache_key('stats', period='weekly', start_date=None, end_date=None)
+                cached_result = get_cached(cache_key, CACHE_TTL_STATS)
+                if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
+                    cached_result['stats'].update(stats_weekly)
+                    set_cache(cache_key, cached_result)
+                else:
+                    default_stats = {
+                        'zip_import': 0, 'decompressed': 0, 'credentials': 0, 'hwid': 0,
+                        'total_organizations': 0, 'organizations_indexes': 0, 'total_domains': 0,
+                        'unique_domains': 0, 'organizations_with_domains': 0, 'domain_occurrences': {},
+                        'credential_types': {}, 'alerts_by_org': {}, 'top_domains_alerts': {}, 'dated': {}
+                    }
+                    default_stats.update(stats_weekly)
+                    result = {
+                        'success': True,
+                        'stats': default_stats,
+                        'period': 'weekly',
+                        'start_date': start_weekly.isoformat(),
+                        'end_date': end_weekly.isoformat()
+                    }
+                    set_cache(cache_key, result)
+                logger.info("Background cache warmup: weekly credentials stats successfully cached.")
+            except Exception as e:
+                logger.error(f"Error in background weekly cache warmup: {e}", exc_info=True)
+                
+            logger.info("Background cache warmup: cycle completed. Sleeping for 1 hour.")
+            time.sleep(3600)
+            
+    thread = threading.Thread(target=warmup_task, daemon=True)
+    thread.start()
+
+
 if __name__ == '__main__':
+    # Start the background cache warmup task
+    start_background_warmup()
     import warnings
     # Suppress threading warnings on Windows
     warnings.filterwarnings('ignore', category=RuntimeWarning, module='werkzeug')

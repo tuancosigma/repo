@@ -54,7 +54,9 @@ def main():
             except Exception:
                 pass
 
+        queried_from_db = False
         if count is None:
+            queried_from_db = True
             print("Querying MongoDB (forcing harvest_date_1 index hint)...")
             pipeline = [
                 {"$match": {
@@ -75,6 +77,28 @@ def main():
                 type_count = item.get('count', 0)
                 breakdown[type_name] = type_count
                 count += type_count
+
+            # Write back to persistent cache to instantly synchronize dashboard
+            try:
+                if os.path.exists(cache_file):
+                    with open(cache_file, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    
+                    updated = False
+                    for key, entry_val in cache_data.items():
+                        entry, timestamp = entry_val
+                        if isinstance(entry, dict) and entry.get('success') and entry.get('period') == 'weekly':
+                            entry['stats']['credentials'] = count
+                            entry['stats']['credential_types'] = breakdown
+                            cache_data[key] = [entry, time.time()]
+                            updated = True
+                            
+                    if updated:
+                        with open(cache_file, 'w', encoding='utf-8') as f:
+                            json.dump(cache_data, f, ensure_ascii=False, indent=2)
+                        print("Saved updated count and breakdown to persistent cache file.")
+            except Exception as e:
+                print(f"Warning: Could not update persistent cache file: {e}")
 
         print("-" * 40)
         print(f"Credentials found (7 days) : {count:,}")
