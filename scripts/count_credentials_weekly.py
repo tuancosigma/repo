@@ -28,11 +28,37 @@ def main():
         now = datetime.now(timezone.utc)
         one_week_ago = (now - timedelta(days=7)).isoformat()
 
-        query = {
-            "harvest_date": {"$gte": one_week_ago}
-        }
+        # Try to read from Flask app persistent cache first for instant response
+        import time
+        import json
+        
+        count = None
+        cache_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'static', 'persistent_cache.json')
+        
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+                    for entry in cache_data.values():
+                        data, timestamp = entry
+                        if isinstance(data, dict) and data.get('success') and data.get('period') == 'weekly':
+                            age = time.time() - timestamp
+                            if age < 3600:  # Cache is fresh (1 hour)
+                                val = data.get('stats', {}).get('credentials')
+                                if val is not None and val > 0:
+                                    count = val
+                                    print("Retrieving count from persistent cache (instant)...")
+                                    break
+            except Exception:
+                pass
 
-        count = collection.count_documents(query)
+        if count is None:
+            print("Querying MongoDB (forcing harvest_date_1 index hint)...")
+            query = {
+                "harvest_date": {"$gte": one_week_ago}
+            }
+            # Explicitly force index usage to avoid slow collection scans on sharded 11-billion doc collection
+            count = collection.count_documents(query, hint="harvest_date_1")
 
         print("-" * 40)
         print(f"Credentials found (7 days) : {count:,}")

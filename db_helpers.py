@@ -276,7 +276,8 @@ def execute_stats_queries(start, end, metrics=None):
         try:
             credentials_result = list(credentials_col.aggregate(
                 pipelines['credentials'], 
-                allowDiskUse=True
+                allowDiskUse=True,
+                hint="harvest_date_1"
             ))
             credentials_count = credentials_result[0]['total'] if credentials_result else 0
             logger.debug(f"Credentials result: {credentials_count}")
@@ -315,7 +316,7 @@ def execute_stats_queries(start, end, metrics=None):
             {"$sort": {"count": -1}}
         ]
         try:
-            credential_types_result = list(credentials_col.aggregate(cred_types_pipeline, allowDiskUse=True))
+            credential_types_result = list(credentials_col.aggregate(cred_types_pipeline, allowDiskUse=True, hint="harvest_date_1"))
             credential_types = {item['_id'] if item['_id'] is not None else 'unknown': item['count'] for item in credential_types_result}
             logger.debug(f"Credential types result: {credential_types}")
         except Exception as e:

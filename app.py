@@ -42,10 +42,37 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Simple in-memory cache with TTL
+# Persistent File Cache with TTL
 _cache = {}
-CACHE_TTL_STATS = 3600  # 1 hour for stats (cached for PDF exports)
+CACHE_TTL_STATS = 86400  # 24 hours for stats (persistent file cache)
 CACHE_TTL_CHART = 300  # 5 minutes for chart data (less frequently updated)
+PERSISTENT_CACHE_FILE = os.path.join(os.path.dirname(__file__), 'static', 'persistent_cache.json')
+
+
+def load_persistent_cache():
+    """Load cache entries from local JSON file."""
+    global _cache
+    if os.path.exists(PERSISTENT_CACHE_FILE):
+        try:
+            with open(PERSISTENT_CACHE_FILE, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+                _cache = {k: (v[0], v[1]) for k, v in loaded.items()}
+                logger.info(f"Loaded {len(_cache)} entries from persistent cache file")
+        except Exception as e:
+            logger.warning(f"Error loading persistent cache file: {e}")
+
+
+def save_persistent_cache():
+    """Save cache entries to local JSON file."""
+    try:
+        with open(PERSISTENT_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Error saving persistent cache file: {e}")
+
+
+# Initialize persistent cache on module load
+load_persistent_cache()
 
 
 def get_cache_key(endpoint, **kwargs):
@@ -81,6 +108,7 @@ def get_cached(key, ttl):
             return data
         else:
             del _cache[key]
+            save_persistent_cache()
             logger.debug(f"Cache EXPIRED (age: {age:.1f}s)")
     logger.debug(f"Cache MISS")
     return None
@@ -89,12 +117,14 @@ def get_cached(key, ttl):
 def set_cache(key, data):
     """Store data in cache with current timestamp."""
     _cache[key] = (data, time.time())
+    save_persistent_cache()
     logger.debug(f"Cache SET ({len(_cache)} entries)")
 
 
 def clear_cache():
     """Clear all cache entries."""
     _cache.clear()
+    save_persistent_cache()
     logger.info("Cache cleared")
 
 
