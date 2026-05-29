@@ -100,6 +100,7 @@ def get_cache_key(endpoint, **kwargs):
 
 def get_cached(key, ttl):
     """Get cached data if not expired."""
+    load_persistent_cache()
     if key in _cache:
         data, timestamp = _cache[key]
         age = time.time() - timestamp
