@@ -344,7 +344,12 @@ function loadAllData() {
 }
 
 function loadStats() {
-    return fetch(buildApiUrl('/api/stats'))
+    // Show spinner inside slow cards so the user knows they are loading in background
+    document.getElementById('credentialsCount').innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width: 1rem; height: 1rem; border-width: 0.15em;"></span>';
+    document.getElementById('hwidCount').innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="width: 1rem; height: 1rem; border-width: 0.15em;"></span>';
+    
+    // 1. Fetch fast metrics first
+    return fetch(buildApiUrl('/api/stats') + '&metric=fast')
         .then(response => {
             if (!response.ok) {
                 return response.text().then(text => {
@@ -357,8 +362,6 @@ function loadStats() {
             if (data.success) {
                 animateNumber('zipCount', data.stats.zip_import);
                 animateNumber('decompressedCount', data.stats.decompressed);
-                animateNumber('credentialsCount', data.stats.credentials);
-                animateNumber('hwidCount', data.stats.hwid);
                 
                 // Organizations stats
                 if (data.stats.total_organizations !== undefined) {
@@ -375,6 +378,53 @@ function loadStats() {
                 
                 // Dated info - always try to display, even if empty
                 displayDated(data.stats.dated || {});
+                
+                // Check if the fast metrics query returned cached credentials and HWID (from a previous full query or background query)
+                // If yes, we can animate them immediately. Otherwise, we start background fetches.
+                if (data.stats.credentials > 0) {
+                    animateNumber('credentialsCount', data.stats.credentials);
+                } else {
+                    // 2. Fetch credentials metric in the background (lazy load)
+                    fetch(buildApiUrl('/api/stats') + '&metric=credentials')
+                        .then(r => {
+                            if (!r.ok) throw new Error();
+                            return r.json();
+                        })
+                        .then(credData => {
+                            if (credData.success) {
+                                animateNumber('credentialsCount', credData.stats.credentials);
+                            } else {
+                                document.getElementById('credentialsCount').textContent = '0';
+                            }
+                        })
+                        .catch(e => {
+                            console.warn('Credentials lazy load failed:', e);
+                            document.getElementById('credentialsCount').textContent = 'N/A';
+                        });
+                }
+                
+                if (data.stats.hwid > 0) {
+                    animateNumber('hwidCount', data.stats.hwid);
+                } else {
+                    // 3. Fetch HWID metric in the background (lazy load)
+                    fetch(buildApiUrl('/api/stats') + '&metric=hwid')
+                        .then(r => {
+                            if (!r.ok) throw new Error();
+                            return r.json();
+                        })
+                        .then(hwidData => {
+                            if (hwidData.success) {
+                                animateNumber('hwidCount', hwidData.stats.hwid);
+                            } else {
+                                document.getElementById('hwidCount').textContent = '0';
+                            }
+                        })
+                        .catch(e => {
+                            console.warn('HWID lazy load failed:', e);
+                            document.getElementById('hwidCount').textContent = 'N/A';
+                        });
+                }
+                
                 return data;
             }
             throw new Error(data.error || 'Failed to load stats');

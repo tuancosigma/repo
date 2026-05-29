@@ -211,12 +211,13 @@ def build_stats_pipelines(start, end):
     return pipelines
 
 
-def execute_stats_queries(start, end):
+def execute_stats_queries(start, end, metrics=None):
     """Execute all statistics queries and return results.
     
     Args:
         start: Start datetime (UTC 0)
         end: End datetime (UTC 0)
+        metrics: Optional list of metrics to query (e.g. ['fast', 'credentials', 'hwid'])
     
     Returns:
         dict: Statistics dictionary with counts
@@ -242,118 +243,126 @@ def execute_stats_queries(start, end):
     credentials_col = get_collection('credentials')
     alerts_col = get_collection('alerts')
     
-    logger.debug(f"Executing stats queries - start={start.isoformat()}, end={end.isoformat()}")
+    logger.debug(f"Executing stats queries - start={start.isoformat()}, end={end.isoformat()}, metrics={metrics}")
     
-    # Execute each query with error handling and detailed logging
-    try:
-        zip_result = list(archives_col.aggregate(pipelines['zip_import'], allowDiskUse=True))
-        zip_count = zip_result[0]['total'] if zip_result else 0
-        logger.debug(f"ZIP import result: {zip_count}")
-    except Exception as e:
-        logger.error(f"Error executing ZIP import query: {e}", exc_info=True)
-        zip_count = 0
+    zip_count = 0
+    decompressed_count = 0
+    credentials_count = 0
+    hwid_count = 0
+    credential_types = {}
+    alerts_by_org = {}
+    top_domains_alerts = {}
     
-    try:
-        decompressed_result = list(archives_col.aggregate(pipelines['decompressed'], allowDiskUse=True))
-        decompressed_count = decompressed_result[0]['total'] if decompressed_result else 0
-        logger.debug(f"Decompressed result: {decompressed_count}")
-    except Exception as e:
-        logger.error(f"Error executing decompressed query: {e}", exc_info=True)
-        decompressed_count = 0
+    # ZIP import query
+    if metrics is None or 'fast' in metrics or 'zip_import' in metrics:
+        try:
+            zip_result = list(archives_col.aggregate(pipelines['zip_import'], allowDiskUse=True))
+            zip_count = zip_result[0]['total'] if zip_result else 0
+            logger.debug(f"ZIP import result: {zip_count}")
+        except Exception as e:
+            logger.error(f"Error executing ZIP import query: {e}", exc_info=True)
     
-    try:
-        # Credentials query - no maxTimeMS, let it run to completion
-        # Data volume can be hundreds of millions, query may take several minutes
-        credentials_result = list(credentials_col.aggregate(
-            pipelines['credentials'], 
-            allowDiskUse=True
-        ))
-        credentials_count = credentials_result[0]['total'] if credentials_result else 0
-        logger.debug(f"Credentials result: {credentials_count}")
-    except Exception as e:
-        # Log timeout errors but don't fail the entire stats request
-        error_msg = str(e)
-        if 'timed out' in error_msg.lower() or 'timeout' in error_msg.lower():
-            logger.warning(f"Credentials query timeout in stats (returning 0) - query may be too slow for date range")
-        else:
-            logger.error(f"Error executing credentials query: {e}", exc_info=True)
-        credentials_count = 0
+    # Decompressed query
+    if metrics is None or 'fast' in metrics or 'decompressed' in metrics:
+        try:
+            decompressed_result = list(archives_col.aggregate(pipelines['decompressed'], allowDiskUse=True))
+            decompressed_count = decompressed_result[0]['total'] if decompressed_result else 0
+            logger.debug(f"Decompressed result: {decompressed_count}")
+        except Exception as e:
+            logger.error(f"Error executing decompressed query: {e}", exc_info=True)
     
-    try:
-        hwid_result = list(alerts_col.aggregate(pipelines['hwid'], allowDiskUse=True))
-        hwid_count = hwid_result[0]['total'] if hwid_result else 0
-        logger.debug(f"HWID result: {hwid_count}")
-    except Exception as e:
-        error_msg = str(e)
-        if 'timed out' in error_msg.lower() or 'timeout' in error_msg.lower():
-            logger.warning(f"HWID query timeout (returning 0)")
-        else:
-            logger.error(f"Error executing HWID query: {e}", exc_info=True)
-        hwid_count = 0
+    # Credentials query
+    if metrics is None or 'credentials' in metrics:
+        try:
+            credentials_result = list(credentials_col.aggregate(
+                pipelines['credentials'], 
+                allowDiskUse=True
+            ))
+            credentials_count = credentials_result[0]['total'] if credentials_result else 0
+            logger.debug(f"Credentials result: {credentials_count}")
+        except Exception as e:
+            error_msg = str(e)
+            if 'timed out' in error_msg.lower() or 'timeout' in error_msg.lower():
+                logger.warning(f"Credentials query timeout in stats (returning 0)")
+            else:
+                logger.error(f"Error executing credentials query: {e}", exc_info=True)
+    
+    # HWID query
+    if metrics is None or 'hwid' in metrics:
+        try:
+            hwid_result = list(alerts_col.aggregate(pipelines['hwid'], allowDiskUse=True))
+            hwid_count = hwid_result[0]['total'] if hwid_result else 0
+            logger.debug(f"HWID result: {hwid_count}")
+        except Exception as e:
+            error_msg = str(e)
+            if 'timed out' in error_msg.lower() or 'timeout' in error_msg.lower():
+                logger.warning(f"HWID query timeout (returning 0)")
+            else:
+                logger.error(f"Error executing HWID query: {e}", exc_info=True)
 
     # 1. Credential Types Breakdown
-    start_str = start.isoformat() if isinstance(start, datetime) else start
-    end_str = end.isoformat() if isinstance(end, datetime) else end
-    cred_types_pipeline = [
-        {"$match": {
-            "harvest_date": {"$gte": start_str, "$lte": end_str}
-        }},
-        {"$group": {
-            "_id": "$source.type",
-            "count": {"$sum": 1}
-        }},
-        {"$sort": {"count": -1}}
-    ]
-    try:
-        credential_types_result = list(credentials_col.aggregate(cred_types_pipeline, allowDiskUse=True))
-        credential_types = {item['_id'] if item['_id'] is not None else 'unknown': item['count'] for item in credential_types_result}
-        logger.debug(f"Credential types result: {credential_types}")
-    except Exception as e:
-        logger.error(f"Error querying credential types: {e}", exc_info=True)
-        credential_types = {}
+    if metrics is None or 'credentials' in metrics or 'credential_types' in metrics:
+        start_str = start.isoformat() if isinstance(start, datetime) else start
+        end_str = end.isoformat() if isinstance(end, datetime) else end
+        cred_types_pipeline = [
+            {"$match": {
+                "harvest_date": {"$gte": start_str, "$lte": end_str}
+            }},
+            {"$group": {
+                "_id": "$source.type",
+                "count": {"$sum": 1}
+            }},
+            {"$sort": {"count": -1}}
+        ]
+        try:
+            credential_types_result = list(credentials_col.aggregate(cred_types_pipeline, allowDiskUse=True))
+            credential_types = {item['_id'] if item['_id'] is not None else 'unknown': item['count'] for item in credential_types_result}
+            logger.debug(f"Credential types result: {credential_types}")
+        except Exception as e:
+            logger.error(f"Error querying credential types: {e}", exc_info=True)
 
     # 2. Alerts by Organization
-    alerts_by_org_pipeline = [
-        {"$match": {
-            "updated_date": {"$gte": start, "$lte": end}
-        }},
-        {"$group": {
-            "_id": "$organization_id",
-            "count": {"$sum": 1}
-        }},
-        {"$sort": {"count": -1}}
-    ]
-    try:
-        alerts_by_org_result = list(alerts_col.aggregate(alerts_by_org_pipeline, allowDiskUse=True))
-        alerts_by_org = {item['_id'] if item['_id'] is not None else 'unknown': item['count'] for item in alerts_by_org_result}
-        logger.debug(f"Alerts by org result: {alerts_by_org}")
-    except Exception as e:
-        logger.error(f"Error querying alerts by org: {e}", exc_info=True)
-        alerts_by_org = {}
+    if metrics is None or 'fast' in metrics or 'alerts_by_org' in metrics:
+        alerts_by_org_pipeline = [
+            {"$match": {
+                "updated_date": {"$gte": start, "$lte": end}
+            }},
+            {"$group": {
+                "_id": "$organization_id",
+                "count": {"$sum": 1}
+            }},
+            {"$sort": {"count": -1}}
+        ]
+        try:
+            alerts_by_org_result = list(alerts_col.aggregate(alerts_by_org_pipeline, allowDiskUse=True))
+            alerts_by_org = {item['_id'] if item['_id'] is not None else 'unknown': item['count'] for item in alerts_by_org_result}
+            logger.debug(f"Alerts by org result: {alerts_by_org}")
+        except Exception as e:
+            logger.error(f"Error querying alerts by org: {e}", exc_info=True)
 
     # 3. Top Domain Occurrences from Alerts
-    top_domains_pipeline = [
-        {"$match": {
-            "updated_date": {"$gte": start, "$lte": end}
-        }},
-        {"$unwind": "$domains"},
-        {"$match": {
-            "domains": {"$ne": None, "$ne": ""}
-        }},
-        {"$group": {
-            "_id": "$domains",
-            "count": {"$sum": 1}
-        }},
-        {"$sort": {"count": -1}},
-        {"$limit": 20}
-    ]
-    try:
-        top_domains_result = list(alerts_col.aggregate(top_domains_pipeline, allowDiskUse=True))
-        top_domains_alerts = {item['_id']: item['count'] for item in top_domains_result}
-        logger.debug(f"Top domains from alerts result: {top_domains_alerts}")
-    except Exception as e:
-        logger.error(f"Error querying top domains from alerts: {e}", exc_info=True)
-        top_domains_alerts = {}
+    if metrics is None or 'fast' in metrics or 'top_domains_alerts' in metrics:
+        top_domains_pipeline = [
+            {"$match": {
+                "updated_date": {"$gte": start, "$lte": end}
+            }},
+            {"$unwind": "$domains"},
+            {"$match": {
+                "domains": {"$ne": None, "$ne": ""}
+            }},
+            {"$group": {
+                "_id": "$domains",
+                "count": {"$sum": 1}
+            }},
+            {"$sort": {"count": -1}},
+            {"$limit": 20}
+        ]
+        try:
+            top_domains_result = list(alerts_col.aggregate(top_domains_pipeline, allowDiskUse=True))
+            top_domains_alerts = {item['_id']: item['count'] for item in top_domains_result}
+            logger.debug(f"Top domains from alerts result: {top_domains_alerts}")
+        except Exception as e:
+            logger.error(f"Error querying top domains from alerts: {e}", exc_info=True)
     
     logger.info(f"Stats query results summary - zip_import={zip_count}, decompressed={decompressed_count}, "
                f"credentials={credentials_count}, hwid={hwid_count}, credential_types_count={len(credential_types)}")

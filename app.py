@@ -44,7 +44,7 @@ app = Flask(__name__)
 
 # Simple in-memory cache with TTL
 _cache = {}
-CACHE_TTL_STATS = 60  # 60 seconds for stats (frequently updated)
+CACHE_TTL_STATS = 3600  # 1 hour for stats (cached for PDF exports)
 CACHE_TTL_CHART = 300  # 5 minutes for chart data (less frequently updated)
 
 
@@ -470,12 +470,13 @@ def get_organizations_stats():
         }
 
 
-def get_stats_from_db(start, end):
+def get_stats_from_db(start, end, metrics=None):
     """Get statistics from MongoDB source collections.
     
     Args:
         start: Start datetime for date-filtered stats (UTC 0)
         end: End datetime for date-filtered stats (UTC 0)
+        metrics: Optional list of metrics/metric groups to query
     
     Returns:
         dict: Combined statistics including date-filtered and organization stats
@@ -486,15 +487,16 @@ def get_stats_from_db(start, end):
         end = normalize_to_utc(end) if end else datetime.now(timezone.utc)
         
         # Log query parameters for debugging
-        logger.info(f"Querying stats from {start.isoformat()} to {end.isoformat()} (UTC 0)")
+        logger.info(f"Querying stats ({metrics}) from {start.isoformat()} to {end.isoformat()} (UTC 0)")
         
         # Execute queries from source collections
-        stats = execute_stats_queries(start, end)
+        stats = execute_stats_queries(start, end, metrics=metrics)
         
         # Add organizations stats (not date-dependent)
-        org_stats = get_organizations_stats()
-        if org_stats:
-            stats.update(org_stats)
+        if metrics is None or 'fast' in metrics:
+            org_stats = get_organizations_stats()
+            if org_stats:
+                stats.update(org_stats)
         
         # Log results for debugging
         logger.info(f"Stats results: zip_import={stats.get('zip_import', 0)}, decompressed={stats.get('decompressed', 0)}")
@@ -514,7 +516,11 @@ def get_stats_from_db(start, end):
             'total_domains': 0,
             'unique_domains': 0,
             'organizations_with_domains': 0,
-            'domain_occurrences': {}
+            'domain_occurrences': {},
+            'credential_types': {},
+            'alerts_by_org': {},
+            'top_domains_alerts': {},
+            'dated': {}
         }
 
 
@@ -652,52 +658,94 @@ def index():
 
 @app.route('/api/stats')
 def get_stats():
-    """Get statistics API endpoint - always queries from source collections.
+    """Get statistics API endpoint - supports lazy loading via metric query parameter.
     
-    Uses cache with 60 second TTL for better performance.
+    Uses cache with 1 hour TTL for better performance.
     """
     try:
         period = request.args.get('period', 'daily')  # Changed default to 'daily' to match frontend
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
+        metric = request.args.get('metric', 'all')  # all, fast, credentials, hwid
         
         # Check cache first
         cache_key = get_cache_key('stats', period=period, start_date=start_date, end_date=end_date)
         cached_result = get_cached(cache_key, CACHE_TTL_STATS)
-        if cached_result is not None:
-            logger.info(f"API /api/stats - returning cached result")
-            return jsonify(cached_result)
         
-        logger.info(f"API /api/stats endpoint called")
+        # If cache exists and we have the requested metric, return it immediately
+        if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
+            stats = cached_result['stats']
+            has_metric = False
+            if metric == 'all':
+                has_metric = True
+            elif metric == 'fast':
+                has_metric = stats.get('zip_import', 0) > 0 or stats.get('total_organizations', 0) > 0
+            elif metric == 'credentials':
+                has_metric = stats.get('credentials', 0) > 0 or len(stats.get('credential_types', {})) > 0
+            elif metric == 'hwid':
+                has_metric = stats.get('hwid', 0) > 0
+                
+            if has_metric:
+                logger.info(f"API /api/stats - returning cached result for metric {metric}")
+                return jsonify(cached_result)
+        
+        logger.info(f"API /api/stats endpoint called for metric {metric}")
         start, end = parse_date_range(period, start_date, end_date)
         
         # Log query parameters with detailed info
-        logger.info(f"API /api/stats called - period={period}, start_date={start_date}, end_date={end_date}")
+        logger.info(f"API /api/stats called - period={period}, start_date={start_date}, end_date={end_date}, metric={metric}")
         logger.info(f"API /api/stats parsed dates - start={start.isoformat()}, end={end.isoformat()}")
         
-        # Query from source collections
-        stats = get_stats_from_db(start, end)
+        # Query only the requested metric from database
+        db_metrics = None if metric == 'all' else [metric]
+        stats = get_stats_from_db(start, end, metrics=db_metrics)
         
-        # Add dated info
-        timestamps = get_data_timestamps()
-        stats["dated"] = timestamps.get("dated", {})
-        
-        # Log results with detailed breakdown
-        logger.info(f"API /api/stats response - zip_import={stats.get('zip_import', 0)}, "
-                   f"decompressed={stats.get('decompressed', 0)}, "
-                   f"credentials={stats.get('credentials', 0)}, "
-                   f"hwid={stats.get('hwid', 0)}, "
-                   f"domain_occurrences_count={len(stats.get('domain_occurrences', {}))}")
-        
-        result = {
-            'success': True,
-            'stats': stats,
-            'period': period,
-            'start_date': start.isoformat(),
-            'end_date': end.isoformat()
-        }
-        
-        # Cache the result
+        # If fast stats are requested, also retrieve data timestamps
+        if metric == 'all' or metric == 'fast':
+            timestamps = get_data_timestamps()
+            stats["dated"] = timestamps.get("dated", {})
+            
+        # Merge stats into existing cache if present
+        if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
+            existing_stats = cached_result['stats']
+            for k, v in stats.items():
+                if isinstance(v, dict) and k in existing_stats and isinstance(existing_stats[k], dict):
+                    existing_stats[k].update(v)
+                else:
+                    existing_stats[k] = v
+            # Use the merged cached result
+            result = cached_result
+            result['period'] = period
+            result['start_date'] = start.isoformat()
+            result['end_date'] = end.isoformat()
+        else:
+            # Initialize a new statistics dictionary with all fields defaulted to prevent frontend errors
+            default_stats = {
+                'zip_import': 0,
+                'decompressed': 0,
+                'credentials': 0,
+                'hwid': 0,
+                'total_organizations': 0,
+                'organizations_indexes': 0,
+                'total_domains': 0,
+                'unique_domains': 0,
+                'organizations_with_domains': 0,
+                'domain_occurrences': {},
+                'credential_types': {},
+                'alerts_by_org': {},
+                'top_domains_alerts': {},
+                'dated': {}
+            }
+            default_stats.update(stats)
+            result = {
+                'success': True,
+                'stats': default_stats,
+                'period': period,
+                'start_date': start.isoformat(),
+                'end_date': end.isoformat()
+            }
+            
+        # Cache the merged or new result under the common cache key
         set_cache(cache_key, result)
         
         return jsonify(result)
