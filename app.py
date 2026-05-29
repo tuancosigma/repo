@@ -2807,40 +2807,8 @@ def start_background_warmup():
             except Exception as e:
                 logger.error(f"Error in background daily cache warmup: {e}", exc_info=True)
                 
-            # 2. Warm up Weekly Credentials Stats
-            try:
-                start_weekly, end_weekly = parse_date_range('weekly', None, None)
-                start_weekly = normalize_to_utc(start_weekly)
-                end_weekly = normalize_to_utc(end_weekly)
-                
-                logger.info("Background cache warmup: executing weekly credentials query...")
-                stats_weekly = get_stats_from_db(start_weekly, end_weekly, metrics=['credentials'])
-                
-                # Fetch cache key and update or merge
-                cache_key = get_cache_key('stats', period='weekly', start_date=None, end_date=None)
-                cached_result = get_cached(cache_key, CACHE_TTL_STATS)
-                if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
-                    cached_result['stats'].update(stats_weekly)
-                    set_cache(cache_key, cached_result)
-                else:
-                    default_stats = {
-                        'zip_import': 0, 'decompressed': 0, 'credentials': 0, 'hwid': 0,
-                        'total_organizations': 0, 'organizations_indexes': 0, 'total_domains': 0,
-                        'unique_domains': 0, 'organizations_with_domains': 0, 'domain_occurrences': {},
-                        'credential_types': {}, 'alerts_by_org': {}, 'top_domains_alerts': {}, 'dated': {}
-                    }
-                    default_stats.update(stats_weekly)
-                    result = {
-                        'success': True,
-                        'stats': default_stats,
-                        'period': 'weekly',
-                        'start_date': start_weekly.isoformat(),
-                        'end_date': end_weekly.isoformat()
-                    }
-                    set_cache(cache_key, result)
-                logger.info("Background cache warmup: weekly credentials stats successfully cached.")
-            except Exception as e:
-                logger.error(f"Error in background weekly cache warmup: {e}", exc_info=True)
+            # We only warm up the daily credentials stats on startup to avoid high database load.
+            # The weekly credentials query will only be executed when the user actively selects the 7-day period.
                 
             logger.info("Background cache warmup: cycle completed. Sleeping for 1 hour.")
             time.sleep(3600)
