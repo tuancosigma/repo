@@ -1294,7 +1294,36 @@ def _generate_pdf_report(period, start_date, end_date):
             "updated_date": {"$gte": start, "$lte": end}
         }
         total_alerts_count = alerts_col.count_documents(org_query)
-        org_alerts = list(alerts_col.find(org_query).limit(25))
+        
+        # Prioritize alerts that have a valid HWID in the date range first
+        hwid_org_query = {
+            "organization_id": org,
+            "updated_date": {"$gte": start, "$lte": end},
+            "detections": {
+                "$elemMatch": {
+                    "detection_date": {"$gte": start, "$lte": end},
+                    "$or": [
+                        {"host.id": {"$exists": True, "$nin": [None, ""]}},
+                        {"source.host.id": {"$exists": True, "$nin": [None, ""]}}
+                    ]
+                }
+            }
+        }
+        hwid_alerts = list(alerts_col.find(hwid_org_query).limit(25))
+        
+        # If we have less than 25 HWID alerts, fetch remaining non-HWID alerts to fill the table
+        remaining_limit = 25 - len(hwid_alerts)
+        if remaining_limit > 0:
+            non_hwid_org_query = {
+                "organization_id": org,
+                "updated_date": {"$gte": start, "$lte": end},
+                "_id": {"$nin": [a["_id"] for a in hwid_alerts]}
+            }
+            non_hwid_alerts = list(alerts_col.find(non_hwid_org_query).limit(remaining_limit))
+            org_alerts = hwid_alerts + non_hwid_alerts
+        else:
+            org_alerts = hwid_alerts
+        
         
         if idx == 0:
             elements.append(PageBreak())
@@ -1303,8 +1332,7 @@ def _generate_pdf_report(period, start_date, end_date):
         org_title_style = ParagraphStyle('OrgTitle', parent=heading_style, fontSize=14, spaceBefore=10, spaceAfter=8)
         elements.append(Paragraph(org, org_title_style))
         
-        table_header = ['URL', 'Login', 'Metadata', 'HWID']
-        rows = [table_header]
+        processed_alerts = []
         for alert in org_alerts:
             url = alert.get('full_url') or alert.get('normalized_url') or 'N/A'
             url_para = Paragraph(url[:65] + ('...' if len(url) > 65 else ''), ParagraphStyle('URLWrap', parent=styles['Normal'], fontSize=8, leading=10))
@@ -1336,8 +1364,22 @@ def _generate_pdf_report(period, start_date, end_date):
                             hwid = host_id
                             break
             
-            hwid_para = Paragraph(hwid[:15] + ('...' if len(hwid) > 15 else ''), ParagraphStyle('HWIDWrap', parent=styles['Normal'], fontSize=8, leading=10))
-            rows.append([url_para, login_para, metadata, hwid_para])
+            processed_alerts.append({
+                'url_para': url_para,
+                'login_para': login_para,
+                'metadata': metadata,
+                'hwid': hwid
+            })
+            
+        # Prioritize alerts with valid HWID (hwid != 'no') first
+        processed_alerts.sort(key=lambda x: 0 if x['hwid'] != 'no' else 1)
+        
+        table_header = ['URL', 'Login', 'Metadata', 'HWID']
+        rows = [table_header]
+        for item in processed_alerts:
+            hwid_val = item['hwid']
+            hwid_para = Paragraph(hwid_val[:15] + ('...' if len(hwid_val) > 15 else ''), ParagraphStyle('HWIDWrap', parent=styles['Normal'], fontSize=8, leading=10))
+            rows.append([item['url_para'], item['login_para'], item['metadata'], hwid_para])
             
         if len(rows) > 1:
             org_table = Table(rows, colWidths=[3.2*inch, 1.8*inch, 0.7*inch, 1.3*inch])
