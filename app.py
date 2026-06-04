@@ -55,12 +55,26 @@ def load_persistent_cache():
     global _cache
     if os.path.exists(PERSISTENT_CACHE_FILE):
         try:
+            # If the file is completely empty (0 bytes), initialize it with empty JSON
+            if os.path.getsize(PERSISTENT_CACHE_FILE) == 0:
+                logger.info("Persistent cache file is empty. Initializing with empty JSON.")
+                _cache = {}
+                save_persistent_cache()
+                return
+                
             with open(PERSISTENT_CACHE_FILE, 'r', encoding='utf-8') as f:
                 loaded = json.load(f)
                 _cache = {k: (v[0], v[1]) for k, v in loaded.items()}
                 logger.info(f"Loaded {len(_cache)} entries from persistent cache file")
         except Exception as e:
             logger.warning(f"Error loading persistent cache file: {e}")
+            # If the file is corrupted, initialize memory cache and write empty JSON to prevent continuous errors
+            _cache = {}
+            try:
+                save_persistent_cache()
+                logger.info("Re-initialized corrupted cache file to empty JSON.")
+            except Exception as save_err:
+                logger.warning(f"Failed to re-initialize cache file: {save_err}")
 
 
 def save_persistent_cache():
@@ -82,6 +96,15 @@ def get_cache_key(endpoint, **kwargs):
     Normalizes start_date/end_date to nearest minute for better cache hit rate.
     """
     kwargs = dict(kwargs)
+    
+    # CRITICAL FIX: Keep cache keys stable for standard rolling windows.
+    # When period is 'daily' or 'weekly' and standard rolling window is used,
+    # start_date and end_date are ignored for cache key generation.
+    # This allows a 100% cache hit rate and prevents on-demand MongoDB queries from hanging the server.
+    if kwargs.get('period') in ['daily', 'weekly']:
+        kwargs['start_date'] = None
+        kwargs['end_date'] = None
+        
     if kwargs.get('start_date'):
         try:
             dt = datetime.fromisoformat(str(kwargs['start_date']).replace('Z', '+00:00'))
@@ -704,18 +727,26 @@ def get_stats():
         cache_key = get_cache_key('stats', period=period, start_date=start_date, end_date=end_date)
         cached_result = get_cached(cache_key, CACHE_TTL_STATS)
         
-        # If cache exists and we have the requested metric, return it immediately
+        # Get cached credentials if present
+        cached_credentials = 0
+        cached_credential_types = {}
         if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
             stats = cached_result['stats']
+            cached_credentials = stats.get('credentials', 0)
+            cached_credential_types = stats.get('credential_types', {})
+            
+            # If the browser requests metric=fast or metric=all, and we already have all metrics fully populated,
+            # return it immediately.
             has_metric = False
             if metric == 'all':
-                has_metric = True
+                has_metric = stats.get('zip_import', 0) > 0 and stats.get('credentials', 0) > 0 and stats.get('hwid', 0) > 0
             elif metric == 'fast':
-                has_metric = stats.get('zip_import', 0) > 0 or stats.get('total_organizations', 0) > 0
+                # We have fast if zip_import is populated
+                has_metric = stats.get('zip_import', 0) > 0
             elif metric == 'credentials':
-                has_metric = stats.get('credentials', 0) > 0 or len(stats.get('credential_types', {})) > 0
+                has_metric = period in ['daily', 'weekly'] or stats.get('credentials', 0) > 0
             elif metric == 'hwid':
-                has_metric = stats.get('hwid', 0) > 0
+                has_metric = period in ['daily', 'weekly'] or stats.get('hwid', 0) > 0
                 
             if has_metric:
                 logger.info(f"API /api/stats - returning cached result for metric {metric}")
@@ -726,12 +757,32 @@ def get_stats():
         
         # Log query parameters with detailed info
         logger.info(f"API /api/stats called - period={period}, start_date={start_date}, end_date={end_date}, metric={metric}")
-        logger.info(f"API /api/stats parsed dates - start={start.isoformat()}, end={end.isoformat()}")
         
-        # Query only the requested metric from database
-        db_metrics = None if metric == 'all' else [metric]
-        stats = get_stats_from_db(start, end, metrics=db_metrics)
-        
+        # CRITICAL OPTIMIZATION:
+        # Instead of caching partial values, we query all results (except credentials if cached)
+        # and cache the complete stats block together.
+        if period in ['daily', 'weekly']:
+            # For standard periods, if we have credentials in the cache, we query only fast + hwid to avoid database timeouts!
+            if cached_credentials > 0:
+                logger.info(f"Using cached credentials count {cached_credentials:,} to avoid slow MongoDB scan.")
+                db_metrics = ['fast', 'hwid']
+            else:
+                # If we don't have cached credentials, we query everything
+                # Note: daily will usually be cached due to background warmup, and weekly will be populated by CLI script
+                db_metrics = None  # None means all metrics
+            
+            # Query the database
+            stats = get_stats_from_db(start, end, metrics=db_metrics)
+            
+            # Merge with cached credentials if we skipped querying them
+            if cached_credentials > 0:
+                stats['credentials'] = cached_credentials
+                stats['credential_types'] = cached_credential_types
+        else:
+            # For custom date ranges, query whatever metric is requested
+            db_metrics = None if metric == 'all' else [metric]
+            stats = get_stats_from_db(start, end, metrics=db_metrics)
+            
         # If fast stats are requested, also retrieve data timestamps
         if metric == 'all' or metric == 'fast':
             timestamps = get_data_timestamps()
@@ -973,7 +1024,7 @@ def export_csv():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-def _generate_pdf_report(period, start_date, end_date):
+def _generate_pdf_report(period, start_date, end_date, bypass_cache=False):
     """Core logic to generate the comprehensive professional PDF report matching the sample layout."""
     global PDF_STYLES
     
@@ -990,15 +1041,20 @@ def _generate_pdf_report(period, start_date, end_date):
     end = normalize_to_utc(end)
     
     # Check cache first
-    cache_key = get_cache_key('stats', period=period, start_date=start_date, end_date=end_date)
-    cached_result = get_cached(cache_key, CACHE_TTL_STATS)
+    cached_result = None
+    if not bypass_cache:
+        cache_key = get_cache_key('stats', period=period, start_date=start_date, end_date=end_date)
+        cached_result = get_cached(cache_key, CACHE_TTL_STATS)
+        
     if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
         stats = cached_result['stats']
         # If cache is partial (credentials or hwid is 0), bypass it to query full results
-        if stats.get('credentials', 0) == 0 or stats.get('hwid', 0) == 0:
+        # BUT for daily/weekly standard rolling periods, never bypass to query DB since it will timeout!
+        if period not in ['daily', 'weekly'] and (stats.get('credentials', 0) == 0 or stats.get('hwid', 0) == 0):
             logger.info("Cached stats are partial (credentials or hwid is 0). Bypassing cache for PDF generation.")
             stats = get_stats_from_db(start, end)
     else:
+        logger.info("Bypassing cache or cache miss. Querying MongoDB directly...")
         stats = get_stats_from_db(start, end)
         
     if not isinstance(stats, dict):
@@ -2764,46 +2820,45 @@ def debug_archives():
 
 
 def start_background_warmup():
-    """Start a background daemon thread to warm up and compute daily and weekly credentials stats."""
+    """Start a background daemon thread to warm up and compute complete daily stats."""
     def warmup_task():
         # Delay slightly to allow the server to start printing routes cleanly
         time.sleep(2)
         
         while True:
-            logger.info("Background cache warmup: starting credentials aggregation queries...")
+            logger.info("Background cache warmup: starting complete daily stats query...")
             
-            # 1. Warm up Daily Credentials Stats
+            # Warm up Daily Stats (All Metrics)
             try:
                 start_daily, end_daily = parse_date_range('daily', None, None)
                 start_daily = normalize_to_utc(start_daily)
                 end_daily = normalize_to_utc(end_daily)
                 
-                logger.info("Background cache warmup: executing daily credentials query...")
-                stats_daily = get_stats_from_db(start_daily, end_daily, metrics=['credentials'])
+                logger.info("Background cache warmup: executing complete daily query (including credentials)...")
+                stats_daily = get_stats_from_db(start_daily, end_daily, metrics=None)
+                
+                # Fetch data timestamps for completeness
+                timestamps = get_data_timestamps()
+                stats_daily["dated"] = timestamps.get("dated", {})
                 
                 # Fetch cache key and update or merge
                 cache_key = get_cache_key('stats', period='daily', start_date=None, end_date=None)
-                cached_result = get_cached(cache_key, CACHE_TTL_STATS)
-                if cached_result is not None and isinstance(cached_result, dict) and 'stats' in cached_result:
-                    cached_result['stats'].update(stats_daily)
-                    set_cache(cache_key, cached_result)
-                else:
-                    default_stats = {
-                        'zip_import': 0, 'decompressed': 0, 'credentials': 0, 'hwid': 0,
-                        'total_organizations': 0, 'organizations_indexes': 0, 'total_domains': 0,
-                        'unique_domains': 0, 'organizations_with_domains': 0, 'domain_occurrences': {},
-                        'credential_types': {}, 'alerts_by_org': {}, 'top_domains_alerts': {}, 'dated': {}
-                    }
-                    default_stats.update(stats_daily)
-                    result = {
-                        'success': True,
-                        'stats': default_stats,
-                        'period': 'daily',
-                        'start_date': start_daily.isoformat(),
-                        'end_date': end_daily.isoformat()
-                    }
-                    set_cache(cache_key, result)
-                logger.info("Background cache warmup: daily credentials stats successfully cached.")
+                default_stats = {
+                    'zip_import': 0, 'decompressed': 0, 'credentials': 0, 'hwid': 0,
+                    'total_organizations': 0, 'organizations_indexes': 0, 'total_domains': 0,
+                    'unique_domains': 0, 'organizations_with_domains': 0, 'domain_occurrences': {},
+                    'credential_types': {}, 'alerts_by_org': {}, 'top_domains_alerts': {}, 'dated': {}
+                }
+                default_stats.update(stats_daily)
+                result = {
+                    'success': True,
+                    'stats': default_stats,
+                    'period': 'daily',
+                    'start_date': start_daily.isoformat(),
+                    'end_date': end_daily.isoformat()
+                }
+                set_cache(cache_key, result)
+                logger.info("Background cache warmup: complete daily stats successfully cached.")
             except Exception as e:
                 logger.error(f"Error in background daily cache warmup: {e}", exc_info=True)
                 
@@ -2818,6 +2873,45 @@ def start_background_warmup():
 
 
 if __name__ == '__main__':
+    import sys
+    
+    # Check if CLI mode is requested for direct PDF report generation
+    if len(sys.argv) > 1 and sys.argv[1] in ['daily', 'weekly']:
+        period = sys.argv[1]
+        print("\n" + "="*70)
+        print(f"      BREACHUNT CLI REPORT GENERATOR (Direct MongoDB Mode)")
+        print("="*70)
+        print(f" Report Period: {period.upper()}")
+        print(" Connecting to database and running MongoDB aggregation queries...")
+        print(" [Warning: Credentials counting scans billions of documents and will take time]")
+        print(" Please wait...")
+        print("="*70)
+        
+        try:
+            start_date, end_date = None, None
+            # Generate PDF by bypassing any cache to query DB directly
+            buffer, end_dt = _generate_pdf_report(period, start_date, end_date, bypass_cache=True)
+            
+            # Save PDF file directly to current working directory
+            filename = f"{period.capitalize()}_report_{end_dt.strftime('%Y-%m-%d')}.pdf"
+            output_path = os.path.join(os.getcwd(), filename)
+            
+            with open(output_path, 'wb') as f:
+                f.write(buffer.getvalue())
+                
+            print("\n" + "="*70)
+            print(" SUCCESS: Report generated and saved successfully!")
+            print(f" Output Location: {output_path}")
+            print("="*70 + "\n")
+            sys.exit(0)
+            
+        except Exception as cli_err:
+            print(f"\n ERROR: Failed to generate report: {cli_err}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+            
+    # Default Flask web server execution
     # Start the background cache warmup task
     start_background_warmup()
     import warnings
