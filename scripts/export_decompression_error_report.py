@@ -218,9 +218,9 @@ def generate_pdf_report(output_path, days_range, report_data, summary_errors, su
                 safe_chan = "Channel (Unicode)"
                 
             # Wrap in paragraphs for auto-wrap
-            name_p = Paragraph(safe_name[:40] + ('...' if len(safe_name) > 40 else ''), table_text_style)
+            name_p = Paragraph(safe_name, table_text_style)
             time_p = Paragraph(row["Inserted Time"].replace(" UTC", ""), table_text_style)
-            chan_p = Paragraph(safe_chan[:30] + ('...' if len(safe_chan) > 30 else ''), table_text_style)
+            chan_p = Paragraph(safe_chan, table_text_style)
             type_p = Paragraph(row["Error Type"], table_text_style)
             
             detail_table_data.append([name_p, time_p, chan_p, type_p])
