@@ -19,7 +19,7 @@ COL_NAME = "credentials"
 def main():
     try:
         print(f"Connecting to MongoDB : {DB_NAME}.{COL_NAME}...")
-        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=MONGODB_TIMEOUT_MS)
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=MONGODB_TIMEOUT_MS, directConnection=True)
         db = client[DB_NAME]
         collection = db[COL_NAME]
 
@@ -58,25 +58,50 @@ def main():
         if count is None:
             queried_from_db = True
             print("Querying MongoDB (forcing harvest_date_1 index hint)...")
+            
+            # Count credentials based on harvest_date index first
+            count_pipeline = [
+                {"$match": {
+                    "harvest_date": {"$gte": one_week_ago}
+                }},
+                {"$count": "total"}
+            ]
+            count_results = list(collection.aggregate(count_pipeline, hint="harvest_date_1", allowDiskUse=True))
+            count = count_results[0]['total'] if count_results else 0
+            
+            # Group credentials by source_id
             pipeline = [
                 {"$match": {
                     "harvest_date": {"$gte": one_week_ago}
                 }},
                 {"$group": {
-                    "_id": "$source.type",
-                    "count": {"$sum": 1}
+                    "_id": "$source_id"
                 }}
             ]
-            # Explicitly force index usage to avoid slow collection scans on sharded 11-billion doc collection
             results = list(collection.aggregate(pipeline, hint="harvest_date_1", allowDiskUse=True))
             
+            print("Fetching sources to memory...")
+            sources_col = db["sources"]
+            sources_cursor = sources_col.find({}, {"_id": 1, "type": 1})
+            sources_dict = {}
+            for s in sources_cursor:
+                s_id = s.get("_id")
+                s_type = s.get("type", "unknown")
+                if s_id is not None:
+                    sources_dict[s_id] = s_type
+                    sources_dict[str(s_id)] = s_type
+
             breakdown = {}
-            count = 0
             for item in results:
-                type_name = item.get('_id') or 'unknown'
-                type_count = item.get('count', 0)
-                breakdown[type_name] = type_count
-                count += type_count
+                source_id = item.get('_id')
+                # Map source_id to its type in memory (counting unique source_ids as 1)
+                type_name = sources_dict.get(source_id)
+                if type_name is None and source_id is not None:
+                    type_name = sources_dict.get(str(source_id), 'unknown')
+                elif type_name is None:
+                    type_name = 'unknown'
+                
+                breakdown[type_name] = breakdown.get(type_name, 0) + 1
 
             # Write back to persistent cache to instantly synchronize dashboard
             try:

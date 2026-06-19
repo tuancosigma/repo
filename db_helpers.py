@@ -310,14 +310,38 @@ def execute_stats_queries(start, end, metrics=None):
                 "harvest_date": {"$gte": start_str, "$lte": end_str}
             }},
             {"$group": {
-                "_id": "$source.type",
-                "count": {"$sum": 1}
-            }},
-            {"$sort": {"count": -1}}
+                "_id": "$source_id"
+            }}
         ]
         try:
             credential_types_result = list(credentials_col.aggregate(cred_types_pipeline, allowDiskUse=True, hint="harvest_date_1"))
-            credential_types = {item['_id'] if item['_id'] is not None else 'unknown': item['count'] for item in credential_types_result}
+            
+            # Fetch sources map to map source_id to type (done after aggregate to include sources created during the long aggregate query)
+            sources_col = credentials_col.database["sources"]
+            sources_cursor = sources_col.find({}, {"_id": 1, "type": 1})
+            sources_dict = {}
+            for s in sources_cursor:
+                s_id = s.get("_id")
+                s_type = s.get("type", "unknown")
+                if s_id is not None:
+                    sources_dict[s_id] = s_type
+                    sources_dict[str(s_id)] = s_type
+
+            # Map source_id to its type in memory (counting unique source_ids as 1)
+            breakdown = {}
+            for item in credential_types_result:
+                source_id = item.get('_id')
+                
+                type_name = sources_dict.get(source_id)
+                if type_name is None and source_id is not None:
+                    type_name = sources_dict.get(str(source_id), 'unknown')
+                elif type_name is None:
+                    type_name = 'unknown'
+                
+                breakdown[type_name] = breakdown.get(type_name, 0) + 1
+            
+            # Sort breakdown by count in descending order
+            credential_types = dict(sorted(breakdown.items(), key=lambda x: x[1], reverse=True))
             logger.debug(f"Credential types result: {credential_types}")
         except Exception as e:
             logger.error(f"Error querying credential types: {e}", exc_info=True)

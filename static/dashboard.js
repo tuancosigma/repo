@@ -972,7 +972,7 @@ function displayReportResults(title, data) {
                     <tr><td>Decompressed Archives</td><td>${(data.stats.decompressed || 0).toLocaleString()}</td></tr>
                     <tr><td>Credentials Found</td><td>${(data.stats.credentials || 0).toLocaleString()}</td></tr>
                     ${data.stats.credential_types ? Object.entries(data.stats.credential_types).map(([type, count]) => `
-                        <tr class="table-light"><td style="padding-left: 20px;"><i class="bi bi-arrow-return-right text-muted me-1"></i> ${type === 'telegram' ? 'Telegram' : type === 'telegram_ulp' ? 'Telegram ULP' : type} (source.type)</td><td>${count.toLocaleString()}</td></tr>
+                        <tr class="table-light"><td style="padding-left: 20px;"><i class="bi bi-arrow-return-right text-muted me-1"></i> ${type === 'telegram' ? 'Telegram' : type === 'telegram_ulp' ? 'Telegram ULP' : type} (Unique Sources)</td><td>${count.toLocaleString()}</td></tr>
                     `).join('') : ''}
                     <tr><td>HWID Found</td><td>${(data.stats.hwid || 0).toLocaleString()}</td></tr>
                     <tr><td>Total Organizations</td><td>${(data.stats.total_organizations || 0).toLocaleString()}</td></tr>

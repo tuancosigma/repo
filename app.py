@@ -1275,8 +1275,8 @@ def _generate_pdf_report(period, start_date, end_date, bypass_cache=False):
         ['Decompressed Archives', f"{decomp_count:,}"],
         ['Credentials Found', f"{cred_count:,}"],
         ['HWID Identified', f"{hwid_count:,}"],
-        ['Telegram (source.type)', f"{telegram_count:,}"],
-        ['Telegram ULP (source.type)', f"{telegram_ulp_count:,}"],
+        ['Telegram (Unique Sources)', f"{telegram_count:,}"],
+        ['Telegram ULP (Unique Sources)', f"{telegram_ulp_count:,}"],
         ['Organizations Tracked', f"{org_count:,}"],
         ['Total Domains', f"{domain_count:,}"]
     ]
@@ -1306,8 +1306,8 @@ def _generate_pdf_report(period, start_date, end_date, bypass_cache=False):
         ['Decompressed Archives', f"{decomp_count:,}"],
         ['Credentials Found', f"{cred_count:,}"],
         ['HWID Found', f"{hwid_count:,}"],
-        ['Telegram (source.type)', f"{telegram_count:,}"],
-        ['Telegram ULP (source.type)', f"{telegram_ulp_count:,}"]
+        ['Telegram (Unique Sources)', f"{telegram_count:,}"],
+        ['Telegram ULP (Unique Sources)', f"{telegram_ulp_count:,}"]
     ]
     main_table = Table(main_stats_data, colWidths=[4*inch, 2.5*inch])
     main_table.setStyle(TableStyle([
